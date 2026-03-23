@@ -12,7 +12,10 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Kjørebok trenger tilgang til GPS for å registrere kjøreturer automatisk.",
         "NSLocationAlwaysUsageDescription": "Kjørebok trenger tilgang til GPS i bakgrunnen for å oppdage start og slutt på turer.",
         "NSLocationWhenInUseUsageDescription": "Kjørebok bruker GPS for å vise posisjonen din på kartet.",
-        "UIBackgroundModes": ["location", "fetch"]
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
       }
     },
     "android": {
@@ -31,7 +34,11 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Kjørebok trenger GPS-tilgang for automatisk turregistrering."
         }
-      ]
+      ],
+      "expo-router",
+      "expo-asset",
+      "expo-font",
+      "expo-web-browser"
     ]
   }
 }
