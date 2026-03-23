@@ -1,12 +1,22 @@
 import { Tabs } from "expo-router";
-import { Text } from "react-native";
+import { Text, TouchableOpacity } from "react-native";
+import { useAuth } from "@/lib/auth";
 
 export default function TabsLayout() {
+  const { logout } = useAuth();
+
+  const logoutButton = (
+    <TouchableOpacity onPress={logout} style={{ marginRight: 16 }}>
+      <Text style={{ color: "#2563eb", fontWeight: "600" }}>Logg ut</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
         tabBarActiveTintColor: "#2563eb",
+        headerRight: () => logoutButton,
       }}
     >
       <Tabs.Screen
