@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Kjørebok",
+    "slug": "kjorebok",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "kjorebok",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "no.kjorebok.app",
+      "infoPlist": {
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Kjørebok trenger tilgang til GPS for å registrere kjøreturer automatisk.",
+        "NSLocationAlwaysUsageDescription": "Kjørebok trenger tilgang til GPS i bakgrunnen for å oppdage start og slutt på turer.",
+        "NSLocationWhenInUseUsageDescription": "Kjørebok bruker GPS for å vise posisjonen din på kartet.",
+        "UIBackgroundModes": ["location", "fetch"]
+      }
+    },
+    "android": {
+      "package": "no.kjorebok.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Kjørebok trenger GPS-tilgang for automatisk turregistrering."
+        }
+      ]
+    ]
+  }
+}
