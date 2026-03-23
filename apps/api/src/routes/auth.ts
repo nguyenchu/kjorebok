@@ -16,6 +16,7 @@ const loginSchema = z.object({
 
 export async function authRoutes(app: FastifyInstance) {
   app.post("/auth/register", async (request, reply) => {
+    app.log.info({ body: request.body }, "register body");
     const body = registerSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
