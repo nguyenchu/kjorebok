@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import type { TripSummary } from "@kjorebok/shared";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
@@ -21,28 +23,47 @@ function formatDuration(start: string, end: string | null) {
 }
 
 export default function DashboardPage() {
+  const { user, loading: authLoading, logout } = useAuth();
+  const router = useRouter();
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!user) { router.replace("/login"); return; }
     api
       .get<TripSummary[]>("/trips")
       .then(setTrips)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [user, authLoading, router]);
+
+  if (authLoading || (!user && !error)) return null;
 
   return (
     <div style={{ maxWidth: 800, margin: "0 auto", padding: "2rem 1rem" }}>
-      <h1 style={{ fontSize: "1.75rem", fontWeight: 700, marginBottom: "1.5rem" }}>
-        Kjørebok
-      </h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
+        <h1 style={{ fontSize: "1.75rem", fontWeight: 700 }}>Kjørebok</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <span style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{user?.name}</span>
+          <button
+            onClick={() => { logout(); router.push("/login"); }}
+            style={{
+              padding: "0.375rem 0.875rem", background: "none",
+              border: "1px solid var(--border)", borderRadius: "var(--radius)",
+              cursor: "pointer", fontSize: "0.875rem",
+            }}
+          >
+            Logg ut
+          </button>
+        </div>
+      </div>
 
       {loading && <p style={{ color: "var(--text-muted)" }}>Laster turer...</p>}
       {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
-      {!loading && trips.length === 0 && (
+      {!loading && trips.length === 0 && !error && (
         <p style={{ color: "var(--text-muted)" }}>
           Ingen turer ennå. Start kjørebok-appen på mobilen for å registrere turer.
         </p>

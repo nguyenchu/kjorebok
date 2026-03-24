@@ -201,11 +201,11 @@ importers:
         specifier: ^22.13.14
         version: 22.19.15
       '@types/react':
-        specifier: ^19.0.10
-        version: 19.0.14
+        specifier: ^19.1.17
+        version: 19.1.17
       '@types/react-dom':
-        specifier: ^19.0.4
-        version: 19.2.3(@types/react@19.0.14)
+        specifier: ^19.1.6
+        version: 19.2.3(@types/react@19.1.17)
       typescript:
         specifier: ^5.8.2
         version: 5.8.3
@@ -1840,9 +1840,6 @@ packages:
     resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
     peerDependencies:
       '@types/react': ^19.2.0
-
-  '@types/react@19.0.14':
-    resolution: {integrity: sha512-ixLZ7zG7j1fM0DijL9hDArwhwcCb4vqmePgwtV0GfnkHRSCUEv4LvzarcTdhoqgyMznUx/EhoTUv31CKZzkQlw==}
 
   '@types/react@19.1.17':
     resolution: {integrity: sha512-Qec1E3mhALmaspIrhWt9jkQMNdw6bReVu64mjvhbhq2NFPftLPVr+l1SZgmw/66WwBNpDh7ao5AT6gF5v41PFA==}
@@ -6030,7 +6027,9 @@ snapshots:
       metro-runtime: 0.83.3
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 
@@ -6205,18 +6204,9 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/react-dom@19.2.3(@types/react@19.0.14)':
-    dependencies:
-      '@types/react': 19.0.14
-
   '@types/react-dom@19.2.3(@types/react@19.1.17)':
     dependencies:
       '@types/react': 19.1.17
-    optional: true
-
-  '@types/react@19.0.14':
-    dependencies:
-      csstype: 3.2.3
 
   '@types/react@19.1.17':
     dependencies:
