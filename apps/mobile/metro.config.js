@@ -16,13 +16,11 @@ config.resolver.nodeModulesPaths = [
   path.resolve(monorepoRoot, "node_modules"),
 ];
 
-// Disable hierarchical lookup so Metro doesn't crawl up the symlink chain.
-config.resolver.disableHierarchicalLookup = true;
-
 // Expo adds "source" to resolverMainFields which makes Metro prefer
 // react-native-screens/src/ (raw TypeScript) over the compiled output,
 // causing "Unknown prop type" Fabric spec errors. Drop "source" so Metro
 // uses the compiled main/react-native fields instead.
 config.resolver.resolverMainFields = ["react-native", "browser", "main", "module"];
+
 
 module.exports = config;
