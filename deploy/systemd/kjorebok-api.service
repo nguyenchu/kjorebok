@@ -1,0 +1,18 @@
+[Unit]
+Description=Kjorebok API
+After=network.target
+
+[Service]
+Type=simple
+User=nguyen
+WorkingDirectory=/home/nguyen/dev/kjorebok
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=API_PREFIX=/api
+EnvironmentFile=-/etc/kjorebok/api.env
+ExecStart=/usr/bin/env pnpm --filter @kjorebok/api start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

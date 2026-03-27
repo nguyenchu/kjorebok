@@ -7,7 +7,9 @@ import React, {
 } from "react";
 import type { User, LoginDto, RegisterDto } from "@kjorebok/shared";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+function getBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "/api";
+}
 
 interface AuthState {
   user: User | null;
@@ -30,7 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function post<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
+    const res = await fetch(`${getBaseUrl()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

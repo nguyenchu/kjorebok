@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@prisma/client/index.js";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import type { GpsPoint } from "@kjorebok/shared";
@@ -44,6 +45,10 @@ function routeDistance(points: GpsPoint[]): number {
     total += haversine(points[i - 1], points[i]);
   }
   return total;
+}
+
+function parseRoute(route: Prisma.JsonValue): GpsPoint[] {
+  return (Array.isArray(route) ? route : []) as unknown as GpsPoint[];
 }
 
 export async function tripRoutes(app: FastifyInstance) {
@@ -111,13 +116,13 @@ export async function tripRoutes(app: FastifyInstance) {
     const trip = await prisma.trip.findFirst({ where: { id, userId, status: "ACTIVE" } });
     if (!trip) return reply.status(404).send({ error: "Active trip not found" });
 
-    const route = trip.route as GpsPoint[];
+    const route = parseRoute(trip.route);
     route.push(body.data.point);
     const distanceMeters = routeDistance(route);
 
     const updated = await prisma.trip.update({
       where: { id },
-      data: { route, distanceMeters },
+      data: { route: route as unknown as Prisma.InputJsonValue, distanceMeters },
     });
     return reply.send(updated);
   });
@@ -132,14 +137,14 @@ export async function tripRoutes(app: FastifyInstance) {
     const trip = await prisma.trip.findFirst({ where: { id, userId, status: "ACTIVE" } });
     if (!trip) return reply.status(404).send({ error: "Active trip not found" });
 
-    const route = trip.route as GpsPoint[];
+    const route = parseRoute(trip.route);
     route.push(body.data.endPoint);
     const distanceMeters = routeDistance(route);
 
     const updated = await prisma.trip.update({
       where: { id },
       data: {
-        route,
+        route: route as unknown as Prisma.InputJsonValue,
         distanceMeters,
         status: "COMPLETED",
         endedAt: new Date(body.data.endPoint.timestamp),
