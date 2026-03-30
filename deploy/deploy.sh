@@ -55,6 +55,6 @@ sudo systemctl status kjorebok-web --no-pager
 
 echo
 echo "Health checks"
-curl -I http://127.0.0.1:3001/api/health
-curl -I http://127.0.0.1:3002
+curl -I http://127.0.0.1:3020/api/health
+curl -I http://127.0.0.1:3021
 curl -I https://kjorebok.nguyenchu.com
