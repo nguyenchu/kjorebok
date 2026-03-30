@@ -4,13 +4,13 @@
 
 Use [deploy/nginx/kjorebok.nguyenchu.com.conf](/home/nguyen/dev/kjorebok/deploy/nginx/kjorebok.nguyenchu.com.conf) as the site config for:
 
-- `https://kjorebok.nguyenchu.com` -> web app on `127.0.0.1:3002`
-- `https://kjorebok.nguyenchu.com/api` -> API on `127.0.0.1:3001/api`
+- `https://kjorebok.nguyenchu.com` -> web app on `127.0.0.1:3021`
+- `https://kjorebok.nguyenchu.com/api` -> API on `127.0.0.1:3020/api`
 - `https://kjorebok.nguyenchu.com/api/health` -> API health endpoint
 
 Expected app processes:
 
-- web: `PORT=3002 pnpm --filter @kjorebok/web start`
+- web: `PORT=3021 pnpm --filter @kjorebok/web start`
 - api: `API_PREFIX=/api pnpm --filter @kjorebok/api start`
 
 Typical Ubuntu steps:

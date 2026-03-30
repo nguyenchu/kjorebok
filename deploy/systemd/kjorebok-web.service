@@ -7,7 +7,7 @@ Type=simple
 User=nguyen
 WorkingDirectory=/home/nguyen/dev/kjorebok
 Environment=NODE_ENV=production
-Environment=PORT=3002
+Environment=PORT=3021
 EnvironmentFile=-/etc/kjorebok/web.env
 ExecStart=/usr/bin/env pnpm --filter @kjorebok/web start
 Restart=always

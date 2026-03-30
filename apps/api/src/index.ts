@@ -16,7 +16,7 @@ await app.register(tripRoutes, { prefix: apiPrefix });
 
 app.get(`${apiPrefix}/health`, async () => ({ ok: true }));
 
-const port = Number(process.env.PORT ?? 3001);
+const port = Number(process.env.PORT ?? 3020);
 await app.listen({ port, host: "0.0.0.0" });
 console.log(`API running on http://localhost:${port}`);
 
