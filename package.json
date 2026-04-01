@@ -3,6 +3,11 @@
   "private": true,
   "scripts": {
     "dev": "turbo dev",
+    "dev:local": "./run-local.sh",
+    "dev:mobile": "pnpm --filter @kjorebok/mobile dev",
+    "dev:mobile:android": "pnpm --filter @kjorebok/mobile android",
+    "dev:api": "pnpm --filter @kjorebok/api dev",
+    "dev:web": "pnpm --filter @kjorebok/web dev",
     "build": "turbo build",
     "lint": "turbo lint",
     "db:generate": "turbo db:generate",
