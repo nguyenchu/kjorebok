@@ -1,6 +1,6 @@
 # Kjørebok
 
-Lokal utvikling:
+## Lokal utvikling
 
 ```bash
 corepack pnpm install
@@ -13,7 +13,13 @@ Start databasen med Docker:
 docker compose up -d
 ```
 
-Lag lokale miljofiler fra eksemplene:
+Kjør migrasjonene:
+
+```bash
+corepack pnpm --filter @kjorebok/api exec prisma migrate deploy
+```
+
+Lag lokale miljøfiler fra eksemplene:
 
 - `apps/api/.env`
 - `apps/web/.env.local`
@@ -24,28 +30,49 @@ Anbefalte porter lokalt:
 - API: `http://localhost:3020`
 - web: `http://localhost:3021`
 
-For Android-emulator bor mobilappen bruke:
+For Android-emulator bør mobilappen bruke:
 
 ```bash
 EXPO_PUBLIC_API_URL=http://10.0.2.2:3020
 ```
 
-Hvis databasen er tom, bruk den eksisterende SQL-migrasjonen:
+## Anbefalt oppstart
 
 ```bash
-docker exec -i kjorebok-postgres psql -U postgres -d kjorebok < apps/api/prisma/migrations/20260323120005/migration.sql
+pnpm dev:local
 ```
 
-Start API og web:
+Det starter:
+
+- API på `http://localhost:3020`
+- web på `http://localhost:3021`
+
+Start mobilappen i en egen terminal:
 
 ```bash
-./run-local.sh
+pnpm dev:mobile
 ```
 
-Start mobilappen i egen terminal:
+Trykk `a` i Expo-terminalen for å åpne appen i Android-emulator.
+
+## Android-emulator
+
+Hvis du vil kjøre den native Android-byggede dev-klienten direkte:
 
 ```bash
-corepack pnpm --filter @kjorebok/mobile dev
+pnpm dev:mobile:android
 ```
 
-Trykk `a` i Expo-terminalen for a apne appen i Android-emulator.
+Nyttige kommandoer:
+
+```bash
+emulator -list-avds
+emulator @Pixel_7
+adb devices
+```
+
+Hvis `adb`, `emulator`, `node` eller `pnpm` ikke finnes i terminalen, last shell-oppsettet på nytt:
+
+```bash
+source ~/.zshrc
+```
