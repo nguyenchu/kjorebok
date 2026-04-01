@@ -100,12 +100,12 @@ export default function DashboardPage() {
               <div
                 style={{
                   fontSize: "0.75rem",
-                  color: trip.status === "active" ? "var(--primary)" : "var(--text-muted)",
+                  color: trip.status === "ACTIVE" ? "var(--primary)" : "var(--text-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                 }}
               >
-                {trip.status === "active" ? "Aktiv" : "Fullført"}
+                {trip.status === "ACTIVE" ? "Aktiv" : "Fullført"}
               </div>
             </div>
           </div>
