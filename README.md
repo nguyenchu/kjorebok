@@ -63,6 +63,27 @@ Hvis du vil kjøre den native Android-byggede dev-klienten direkte:
 pnpm dev:mobile:android
 ```
 
+## Android uten datakabel
+
+Hvis du vil teste på fysisk Android-enhet uten USB-data, bygg en installérbar APK med EAS:
+
+```bash
+cd apps/mobile
+eas login
+EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api eas build -p android --profile preview
+```
+
+`preview`-profilen lager en `.apk` som kan åpnes direkte på telefonen fra EAS-lenken når bygget er ferdig.
+
+For Google Play / ordinær release:
+
+```bash
+cd apps/mobile
+EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api eas build -p android --profile production
+```
+
+Da får du en production Android App Bundle (`.aab`).
+
 Nyttige kommandoer:
 
 ```bash

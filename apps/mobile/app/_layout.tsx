@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Stack, router, useSegments } from "expo-router";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { ensureTrackingConfigured } from "@/lib/tripTracker";
 
 function NavigationGuard() {
   const { user, loading } = useAuth();
@@ -19,10 +20,23 @@ function NavigationGuard() {
   return null;
 }
 
+function TrackingBootstrap() {
+  const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (loading || !user) return;
+
+    ensureTrackingConfigured().catch(() => {});
+  }, [user, loading]);
+
+  return null;
+}
+
 export default function RootLayout() {
   return (
     <AuthProvider>
       <NavigationGuard />
+      <TrackingBootstrap />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="login" />

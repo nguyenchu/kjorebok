@@ -11,7 +11,7 @@ export interface GpsPoint {
 
 export interface Trip {
   id: string;
-  vehicleId: string;
+  vehicleId: string | null;
   userId: string;
   status: TripStatus;
   startedAt: string;
@@ -25,16 +25,21 @@ export interface Trip {
 }
 
 export interface CreateTripDto {
-  vehicleId: string;
   startPoint: GpsPoint;
+  startAddress?: string | null;
 }
 
 export interface AddRoutePointDto {
   point: GpsPoint;
 }
 
+export interface AddRouteBatchDto {
+  points: GpsPoint[];
+}
+
 export interface CompleteTripDto {
   endPoint: GpsPoint;
+  endAddress?: string | null;
 }
 
 export type TripSummary = Omit<Trip, "route">;

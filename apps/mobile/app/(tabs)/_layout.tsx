@@ -34,13 +34,6 @@ export default function TabsLayout() {
           tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>📍</Text>,
         }}
       />
-      <Tabs.Screen
-        name="vehicles"
-        options={{
-          title: "Kjøretøy",
-          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>🚘</Text>,
-        }}
-      />
     </Tabs>
   );
 }

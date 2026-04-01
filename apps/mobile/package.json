@@ -7,7 +7,9 @@
     "dev": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "build:preview": "eas build --profile preview"
+    "build:preview": "eas build --profile preview",
+    "build:android:apk": "eas build -p android --profile preview",
+    "build:android:production": "eas build -p android --profile production"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",
