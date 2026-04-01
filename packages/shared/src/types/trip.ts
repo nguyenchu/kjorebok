@@ -1,4 +1,4 @@
-export type TripStatus = "active" | "completed";
+export type TripStatus = "ACTIVE" | "COMPLETED";
 
 export interface GpsPoint {
   lat: number;

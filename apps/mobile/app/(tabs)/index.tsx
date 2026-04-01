@@ -47,8 +47,8 @@ export default function TripsScreen() {
         <View style={styles.card}>
           <View style={styles.cardRow}>
             <Text style={styles.distance}>{formatDistance(item.distanceMeters)}</Text>
-            <View style={[styles.badge, item.status === "active" && styles.badgeActive]}>
-              <Text style={styles.badgeText}>{item.status === "active" ? "Aktiv" : "Fullført"}</Text>
+            <View style={[styles.badge, item.status === "ACTIVE" && styles.badgeActive]}>
+              <Text style={styles.badgeText}>{item.status === "ACTIVE" ? "Aktiv" : "Fullført"}</Text>
             </View>
           </View>
           <Text style={styles.route}>
