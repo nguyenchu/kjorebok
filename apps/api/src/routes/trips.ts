@@ -14,16 +14,21 @@ const gpsPointSchema = z.object({
 });
 
 const startTripSchema = z.object({
-  vehicleId: z.string(),
   startPoint: gpsPointSchema,
+  startAddress: z.string().trim().min(1).nullable().optional(),
 });
 
 const addPointSchema = z.object({
   point: gpsPointSchema,
 });
 
+const addPointsBatchSchema = z.object({
+  points: z.array(gpsPointSchema).min(1),
+});
+
 const endTripSchema = z.object({
   endPoint: gpsPointSchema,
+  endAddress: z.string().trim().min(1).nullable().optional(),
 });
 
 /** Haversine distance in meters between two lat/lng points */
@@ -49,6 +54,30 @@ function routeDistance(points: GpsPoint[]): number {
 
 function parseRoute(route: Prisma.JsonValue): GpsPoint[] {
   return (Array.isArray(route) ? route : []) as unknown as GpsPoint[];
+}
+
+function samePoint(a: GpsPoint, b: GpsPoint): boolean {
+  return (
+    a.timestamp === b.timestamp &&
+    a.lat === b.lat &&
+    a.lng === b.lng &&
+    a.speed === b.speed &&
+    a.heading === b.heading &&
+    a.accuracy === b.accuracy
+  );
+}
+
+function appendUniquePoints(route: GpsPoint[], points: GpsPoint[]): GpsPoint[] {
+  const next = [...route];
+
+  for (const point of points) {
+    const last = next[next.length - 1];
+    if (!last || !samePoint(last, point)) {
+      next.push(point);
+    }
+  }
+
+  return next;
 }
 
 export async function tripRoutes(app: FastifyInstance) {
@@ -85,21 +114,17 @@ export async function tripRoutes(app: FastifyInstance) {
     const body = startTripSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
-    const { vehicleId, startPoint } = body.data;
+    const { startPoint, startAddress } = body.data;
 
-    // Verify vehicle belongs to user
-    const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId, userId } });
-    if (!vehicle) return reply.status(404).send({ error: "Vehicle not found" });
-
-    // Only one active trip per vehicle at a time
-    const active = await prisma.trip.findFirst({ where: { vehicleId, status: "ACTIVE" } });
-    if (active) return reply.status(409).send({ error: "A trip is already active for this vehicle" });
+    const active = await prisma.trip.findFirst({ where: { userId, status: "ACTIVE" } });
+    if (active) return reply.status(409).send({ error: "An active trip already exists" });
 
     const trip = await prisma.trip.create({
       data: {
         userId,
-        vehicleId,
+        vehicleId: null,
         startedAt: new Date(startPoint.timestamp),
+        startAddress: startAddress ?? null,
         route: [startPoint],
       },
     });
@@ -127,6 +152,31 @@ export async function tripRoutes(app: FastifyInstance) {
     return reply.send(updated);
   });
 
+  app.post("/trips/:id/points/batch", auth, async (request, reply) => {
+    const userId = (request.user as any).sub;
+    const { id } = request.params as { id: string };
+    const body = addPointsBatchSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const trip = await prisma.trip.findFirst({ where: { id, userId, status: "ACTIVE" } });
+    if (!trip) return reply.status(404).send({ error: "Active trip not found" });
+
+    const route = appendUniquePoints(parseRoute(trip.route), body.data.points);
+    const distanceMeters = routeDistance(route);
+
+    const updated = await prisma.trip.update({
+      where: { id },
+      data: { route: route as unknown as Prisma.InputJsonValue, distanceMeters },
+    });
+
+    return reply.send({
+      tripId: updated.id,
+      acceptedPoints: route.length - parseRoute(trip.route).length,
+      distanceMeters: updated.distanceMeters,
+      lastPointTimestamp: route[route.length - 1]?.timestamp ?? null,
+    });
+  });
+
   // End a trip
   app.post("/trips/:id/end", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
@@ -137,8 +187,7 @@ export async function tripRoutes(app: FastifyInstance) {
     const trip = await prisma.trip.findFirst({ where: { id, userId, status: "ACTIVE" } });
     if (!trip) return reply.status(404).send({ error: "Active trip not found" });
 
-    const route = parseRoute(trip.route);
-    route.push(body.data.endPoint);
+    const route = appendUniquePoints(parseRoute(trip.route), [body.data.endPoint]);
     const distanceMeters = routeDistance(route);
 
     const updated = await prisma.trip.update({
@@ -148,6 +197,7 @@ export async function tripRoutes(app: FastifyInstance) {
         distanceMeters,
         status: "COMPLETED",
         endedAt: new Date(body.data.endPoint.timestamp),
+        endAddress: body.data.endAddress ?? null,
       },
     });
     return reply.send(updated);

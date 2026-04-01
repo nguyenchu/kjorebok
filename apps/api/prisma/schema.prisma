@@ -33,7 +33,7 @@ model Vehicle {
 
 model Trip {
   id             String     @id @default(cuid())
-  vehicleId      String
+  vehicleId      String?
   userId         String
   status         TripStatus @default(ACTIVE)
   startedAt      DateTime
@@ -46,7 +46,7 @@ model Trip {
   route          Json       @default("[]")
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
-  vehicle        Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  vehicle        Vehicle?   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])

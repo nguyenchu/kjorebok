@@ -1,43 +1,78 @@
 /**
  * Auto trip detection using expo-location background tasks.
  *
- * State machine:
- *   IDLE  →  DETECTING_START (speed > START_SPEED_THRESHOLD for START_CONFIRM_POINTS consecutive points)
- *   DETECTING_START  →  RECORDING (confirmed moving)
- *   RECORDING  →  DETECTING_STOP (speed < STOP_SPEED_THRESHOLD)
- *   DETECTING_STOP  →  IDLE (stationary for STOP_CONFIRM_MS → end trip)
- *   DETECTING_STOP  →  RECORDING (speed picks up again → resume)
+ * Tracking is intended to stay on continuously once permissions are granted
+ * and a vehicle has been selected.
  */
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "./api";
 import type { GpsPoint } from "@kjorebok/shared";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 
-const START_SPEED_MS = 5 / 3.6;       // 5 km/h in m/s
-const STOP_SPEED_MS = 2 / 3.6;        // 2 km/h in m/s
-const START_CONFIRM_POINTS = 3;        // consecutive fast points to start
-const STOP_CONFIRM_MS = 3 * 60 * 1000; // 3 min stationary to stop
+const START_SPEED_MS = 5 / 3.6;
+const STOP_SPEED_MS = 2 / 3.6;
+const START_CONFIRM_POINTS = 3;
+const STOP_CONFIRM_MS = 3 * 60 * 1000;
+const SYNC_BATCH_SIZE = 25;
+const MAX_PENDING_POINTS = 500;
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 
 const STATE_KEY = "tracker_state";
 const ACTIVE_TRIP_KEY = "tracker_active_trip_id";
-const VEHICLE_KEY = "tracker_vehicle_id";
 const FAST_COUNT_KEY = "tracker_fast_count";
 const STOP_TIME_KEY = "tracker_stop_time";
+const PENDING_POINTS_KEY = "tracker_pending_points";
+
+let syncPromise: Promise<void> | null = null;
 
 async function get(key: string): Promise<string | null> {
   return AsyncStorage.getItem(key);
 }
+
 async function set(key: string, value: string): Promise<void> {
   await AsyncStorage.setItem(key, value);
 }
+
 async function clear(key: string): Promise<void> {
   await AsyncStorage.removeItem(key);
+}
+
+async function getPendingPoints(): Promise<GpsPoint[]> {
+  const raw = await get(PENDING_POINTS_KEY);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as GpsPoint[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function setPendingPoints(points: GpsPoint[]): Promise<void> {
+  await set(PENDING_POINTS_KEY, JSON.stringify(points.slice(-MAX_PENDING_POINTS)));
+}
+
+async function enqueuePoint(point: GpsPoint): Promise<void> {
+  const points = await getPendingPoints();
+  const last = points[points.length - 1];
+
+  if (
+    last &&
+    last.timestamp === point.timestamp &&
+    last.lat === point.lat &&
+    last.lng === point.lng
+  ) {
+    return;
+  }
+
+  points.push(point);
+  await setPendingPoints(points);
 }
 
 function toGpsPoint(loc: Location.LocationObject): GpsPoint {
@@ -49,6 +84,76 @@ function toGpsPoint(loc: Location.LocationObject): GpsPoint {
     accuracy: loc.coords.accuracy ?? 0,
     timestamp: new Date(loc.timestamp).toISOString(),
   };
+}
+
+function formatAddress(parts: Location.LocationGeocodedAddress | null): string | null {
+  if (!parts) return null;
+
+  const street = [parts.street, parts.streetNumber].filter(Boolean).join(" ").trim();
+  const locality = [parts.postalCode, parts.city].filter(Boolean).join(" ").trim();
+  const region = [street, locality, parts.district || parts.region || parts.country]
+    .filter(Boolean)
+    .join(", ")
+    .trim();
+
+  return region || null;
+}
+
+async function reverseGeocode(point: GpsPoint): Promise<string | null> {
+  try {
+    const matches = await Location.reverseGeocodeAsync({
+      latitude: point.lat,
+      longitude: point.lng,
+    });
+
+    return formatAddress(matches[0] ?? null);
+  } catch {
+    return null;
+  }
+}
+
+async function flushPendingPoints(tripId: string): Promise<void> {
+  if (syncPromise) {
+    await syncPromise;
+    return;
+  }
+
+  syncPromise = (async () => {
+    while (true) {
+      const points = await getPendingPoints();
+      if (points.length === 0) break;
+
+      const batch = points.slice(0, SYNC_BATCH_SIZE);
+      await api.post(`/trips/${tripId}/points/batch`, { points: batch });
+      await setPendingPoints(points.slice(batch.length));
+    }
+  })();
+
+  try {
+    await syncPromise;
+  } finally {
+    syncPromise = null;
+  }
+}
+
+async function startTrip(point: GpsPoint): Promise<boolean> {
+  try {
+    const startAddress = await reverseGeocode(point);
+    const trip = await api.post<{ id: string }>("/trips", {
+      startPoint: point,
+      startAddress,
+    });
+
+    await clear(PENDING_POINTS_KEY);
+    await set(ACTIVE_TRIP_KEY, trip.id);
+    await set(STATE_KEY, "RECORDING");
+    await clear(FAST_COUNT_KEY);
+    return true;
+  } catch {
+    await set(STATE_KEY, "IDLE");
+    await clear(FAST_COUNT_KEY);
+    return false;
+  }
 }
 
 async function handleLocation(loc: Location.LocationObject): Promise<void> {
@@ -67,31 +172,13 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
     case "DETECTING_START": {
       if (speed > START_SPEED_MS) {
-        const count = Number(await get(FAST_COUNT_KEY)) + 1;
+        const count = Number((await get(FAST_COUNT_KEY)) ?? "0") + 1;
         if (count >= START_CONFIRM_POINTS) {
-          // Start a new trip
-          const vehicleId = await get(VEHICLE_KEY);
-          if (!vehicleId) {
-            // No vehicle configured, stay idle
-            await set(STATE_KEY, "IDLE");
-            return;
-          }
-          try {
-            const trip = await api.post<{ id: string }>("/trips", {
-              vehicleId,
-              startPoint: point,
-            });
-            await set(ACTIVE_TRIP_KEY, trip.id);
-            await set(STATE_KEY, "RECORDING");
-            await clear(FAST_COUNT_KEY);
-          } catch {
-            await set(STATE_KEY, "IDLE");
-          }
+          await startTrip(point);
         } else {
           await set(FAST_COUNT_KEY, String(count));
         }
       } else {
-        // Dropped below threshold, reset
         await set(STATE_KEY, "IDLE");
         await clear(FAST_COUNT_KEY);
       }
@@ -100,11 +187,13 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
     case "RECORDING": {
       const tripId = await get(ACTIVE_TRIP_KEY);
-      if (!tripId) { await set(STATE_KEY, "IDLE"); return; }
+      if (!tripId) {
+        await set(STATE_KEY, "IDLE");
+        return;
+      }
 
-      try {
-        await api.post(`/trips/${tripId}/points`, { point });
-      } catch { /* best-effort, keep recording */ }
+      await enqueuePoint(point);
+      await flushPendingPoints(tripId).catch(() => {});
 
       if (speed < STOP_SPEED_MS) {
         await set(STATE_KEY, "DETECTING_STOP");
@@ -115,24 +204,28 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
     case "DETECTING_STOP": {
       const tripId = await get(ACTIVE_TRIP_KEY);
-      if (!tripId) { await set(STATE_KEY, "IDLE"); return; }
-
-      if (speed > START_SPEED_MS) {
-        // Moving again — continue recording
-        await set(STATE_KEY, "RECORDING");
-        await clear(STOP_TIME_KEY);
-        try {
-          await api.post(`/trips/${tripId}/points`, { point });
-        } catch { /* best-effort */ }
+      if (!tripId) {
+        await set(STATE_KEY, "IDLE");
         return;
       }
 
-      const stopTime = Number(await get(STOP_TIME_KEY));
+      await enqueuePoint(point);
+
+      if (speed > START_SPEED_MS) {
+        await set(STATE_KEY, "RECORDING");
+        await clear(STOP_TIME_KEY);
+        await flushPendingPoints(tripId).catch(() => {});
+        return;
+      }
+
+      const stopTime = Number((await get(STOP_TIME_KEY)) ?? "0");
       if (loc.timestamp - stopTime >= STOP_CONFIRM_MS) {
-        // Stationary long enough — end trip
         try {
-          await api.post(`/trips/${tripId}/end`, { endPoint: point });
+          await flushPendingPoints(tripId);
+          const endAddress = await reverseGeocode(point);
+          await api.post(`/trips/${tripId}/end`, { endPoint: point, endAddress });
         } finally {
+          await clear(PENDING_POINTS_KEY);
           await clear(ACTIVE_TRIP_KEY);
           await clear(STOP_TIME_KEY);
           await set(STATE_KEY, "IDLE");
@@ -143,39 +236,69 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
   }
 }
 
-// Register the background task (must be called at module top level)
-TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
-  if (error) { console.error("[TripTracker]", error); return; }
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error("[TripTracker]", error);
+    return;
+  }
+
   const { locations } = data as { locations: Location.LocationObject[] };
-  for (const loc of locations) {
-    handleLocation(loc).catch(console.error);
+  try {
+    for (const loc of locations) {
+      await handleLocation(loc);
+    }
+  } catch (taskError) {
+    console.error("[TripTracker]", taskError);
   }
 });
 
 export async function requestPermissions(): Promise<boolean> {
-  const { status: fg } = await Location.requestForegroundPermissionsAsync();
-  if (fg !== "granted") return false;
-  const { status: bg } = await Location.requestBackgroundPermissionsAsync();
-  return bg === "granted";
+  const fgStatus = await Location.getForegroundPermissionsAsync();
+  const fg =
+    fgStatus.status === "granted"
+      ? fgStatus
+      : await Location.requestForegroundPermissionsAsync();
+  if (fg.status !== "granted") return false;
+
+  const bgStatus = await Location.getBackgroundPermissionsAsync();
+  const bg =
+    bgStatus.status === "granted"
+      ? bgStatus
+      : await Location.requestBackgroundPermissionsAsync();
+
+  return bg.status === "granted";
 }
 
-export async function startTracking(vehicleId: string): Promise<void> {
-  await set(VEHICLE_KEY, vehicleId);
-  await set(STATE_KEY, "IDLE");
+export async function ensureTrackingConfigured(): Promise<boolean> {
+  const granted = await requestPermissions();
+  if (!granted) return false;
 
   const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  if (isRunning) return;
+  if (!isRunning) {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 5000,
+      distanceInterval: 10,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: "Kjørebok",
+        notificationBody: "Sporing er alltid aktiv for å fange opp turer automatisk.",
+      },
+    });
+  }
 
-  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-    accuracy: Location.Accuracy.High,
-    timeInterval: 5000,      // 5s
-    distanceInterval: 10,    // or every 10m
-    showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: "Kjørebok",
-      notificationBody: "Overvåker kjøring...",
-    },
-  });
+  const tripId = await get(ACTIVE_TRIP_KEY);
+  if (tripId) {
+    await flushPendingPoints(tripId).catch(() => {});
+  }
+
+  return true;
+}
+
+export async function syncActiveTrip(): Promise<void> {
+  const tripId = await get(ACTIVE_TRIP_KEY);
+  if (!tripId) return;
+  await flushPendingPoints(tripId);
 }
 
 export async function stopTracking(): Promise<void> {
@@ -183,13 +306,26 @@ export async function stopTracking(): Promise<void> {
   if (isRunning) {
     await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
   }
+
   await clear(STATE_KEY);
-  await clear(VEHICLE_KEY);
+  await clear(ACTIVE_TRIP_KEY);
+  await clear(FAST_COUNT_KEY);
+  await clear(STOP_TIME_KEY);
+  await clear(PENDING_POINTS_KEY);
 }
 
-export async function getTrackerState(): Promise<{ state: TrackerState; activeTripId: string | null }> {
+export async function getTrackerState(): Promise<{
+  state: TrackerState;
+  activeTripId: string | null;
+  pendingPoints: number;
+  trackingEnabled: boolean;
+}> {
+  const trackingEnabled = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
+
   return {
     state: ((await get(STATE_KEY)) ?? "IDLE") as TrackerState,
     activeTripId: await get(ACTIVE_TRIP_KEY),
+    pendingPoints: (await getPendingPoints()).length,
+    trackingEnabled,
   };
 }

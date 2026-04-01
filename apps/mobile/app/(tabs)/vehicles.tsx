@@ -27,7 +27,7 @@ export default function VehiclesScreen() {
     if (!name.trim() || !plate.trim()) return;
     setSaving(true);
     try {
-      await api.post("/vehicles", { name: name.trim(), licensePlate: plate.trim().toUpperCase() });
+      await api.post<Vehicle>("/vehicles", { name: name.trim(), licensePlate: plate.trim().toUpperCase() });
       setName("");
       setPlate("");
       await load();

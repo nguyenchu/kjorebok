@@ -11,6 +11,31 @@ API_SERVICE_DEST="/etc/systemd/system/kjorebok-api.service"
 WEB_SERVICE_DEST="/etc/systemd/system/kjorebok-web.service"
 API_ENV_FILE="/etc/kjorebok/api.env"
 WEB_ENV_FILE="/etc/kjorebok/web.env"
+LOCAL_NODE_DIR="$(find "$ROOT_DIR/.tools" -maxdepth 1 -type d -name 'node-*' | head -n 1 || true)"
+
+if [[ -n "$LOCAL_NODE_DIR" && -x "$LOCAL_NODE_DIR/bin/node" ]]; then
+  export PATH="$LOCAL_NODE_DIR/bin:$PATH"
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Missing Node.js on deploy target." >&2
+  exit 1
+fi
+
+pnpm_cmd() {
+  if command -v corepack >/dev/null 2>&1; then
+    corepack pnpm "$@"
+    return
+  fi
+
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm "$@"
+    return
+  fi
+
+  echo "Missing pnpm/corepack on deploy target." >&2
+  exit 1
+}
 
 echo "Deploying kjorebok from $ROOT_DIR"
 
@@ -33,10 +58,11 @@ if [[ -n "$(git status --short)" ]]; then
 fi
 
 git pull
-pnpm install
-pnpm --filter @kjorebok/api db:generate
-pnpm --filter @kjorebok/api build
-pnpm --filter @kjorebok/web build
+pnpm_cmd install --frozen-lockfile
+pnpm_cmd --filter @kjorebok/api db:generate
+pnpm_cmd --filter @kjorebok/api exec prisma migrate deploy
+pnpm_cmd --filter @kjorebok/api build
+pnpm_cmd --filter @kjorebok/web build
 
 sudo mkdir -p /etc/kjorebok
 sudo cp "$NGINX_SITE_SRC" "$NGINX_SITE_DEST"

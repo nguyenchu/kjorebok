@@ -82,3 +82,31 @@ It will stop early if either of these files is missing:
 - `/etc/kjorebok/web.env`
 
 It also stops if `git status --short` is not clean, so deploy does not accidentally run on top of local uncommitted changes.
+
+## GitHub Actions
+
+This repo includes a production deploy workflow at
+[`/.github/workflows/deploy.yml`](/Users/nguyen/dev/kjorebok/.github/workflows/deploy.yml).
+
+It runs on pushes to `main` and on manual dispatch. The workflow:
+
+- installs dependencies
+- generates Prisma client
+- builds API and web
+- SSHes into the server
+- runs `bash deploy/deploy.sh`
+
+Required GitHub Actions secrets:
+
+- `DEPLOY_HOST`: server hostname
+- `DEPLOY_USER`: SSH username
+- `DEPLOY_PATH`: absolute repo path on the server, for example `/home/nguyen/dev/kjorebok`
+- `DEPLOY_SSH_KEY`: private SSH key with access to the deploy target
+
+The deploy target must already have:
+
+- the repo cloned at `DEPLOY_PATH`
+- Node.js available, or a local runtime in `.tools/`
+- `/etc/kjorebok/api.env`
+- `/etc/kjorebok/web.env`
+- sudo rights for nginx/systemd actions used by `deploy/deploy.sh`

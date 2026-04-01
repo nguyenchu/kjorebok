@@ -7,6 +7,7 @@ import {
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api, setToken, clearToken } from "./api";
+import { stopTracking } from "./tripTracker";
 import type { User, LoginDto, RegisterDto } from "@kjorebok/shared";
 
 interface AuthState {
@@ -58,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    await stopTracking().catch(() => {});
     await clearToken();
     await AsyncStorage.removeItem(USER_KEY);
     setState({ user: null, loading: false });
