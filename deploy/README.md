@@ -56,6 +56,7 @@ Example `/etc/kjorebok/web.env`:
 
 ```bash
 NEXT_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api
+NEXT_PUBLIC_ANDROID_DOWNLOAD_URL=https://kjorebok.nguyenchu.com/download/android.apk
 ```
 
 ## Deploy Script

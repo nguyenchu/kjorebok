@@ -2,12 +2,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { getAndroidDownloadUrl } from "@/lib/config";
 
 type Mode = "login" | "register";
 
 export default function LoginPage() {
   const { login, register } = useAuth();
   const router = useRouter();
+  const androidDownloadUrl = getAndroidDownloadUrl();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -97,6 +99,36 @@ export default function LoginPage() {
         >
           {mode === "login" ? "Har du ikke konto? Registrer deg" : "Har du allerede konto? Logg inn"}
         </button>
+
+        <div
+          style={{
+            marginTop: "1.25rem",
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            borderRadius: "16px",
+            padding: "1rem",
+          }}
+        >
+          <p style={{ fontWeight: 700, marginBottom: "0.35rem" }}>Trenger du Android-appen?</p>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.92rem", marginBottom: androidDownloadUrl ? "0.8rem" : 0 }}>
+            Turene registreres på mobilen og blir synlige her i weboversikten.
+          </p>
+          {androidDownloadUrl && (
+            <a
+              href={androidDownloadUrl}
+              style={{
+                display: "inline-block",
+                background: "var(--primary)",
+                color: "#fff",
+                padding: "0.75rem 0.95rem",
+                borderRadius: "999px",
+                fontWeight: 700,
+              }}
+            >
+              Last ned Android-app
+            </a>
+          )}
+        </div>
       </div>
     </div>
   );
