@@ -12,6 +12,10 @@ WEB_SERVICE_DEST="/etc/systemd/system/kjorebok-web.service"
 API_ENV_FILE="/etc/kjorebok/api.env"
 WEB_ENV_FILE="/etc/kjorebok/web.env"
 LOCAL_NODE_DIR="$(find "$ROOT_DIR/.tools" -maxdepth 1 -type d -name 'node-*' | head -n 1 || true)"
+CP_BIN="/usr/bin/cp"
+MKDIR_BIN="/usr/bin/mkdir"
+NGINX_BIN="/usr/sbin/nginx"
+SYSTEMCTL_BIN="/usr/bin/systemctl"
 
 if [[ -n "$LOCAL_NODE_DIR" && -x "$LOCAL_NODE_DIR/bin/node" ]]; then
   export PATH="$LOCAL_NODE_DIR/bin:$PATH"
@@ -78,20 +82,20 @@ pnpm_cmd --filter @kjorebok/api exec prisma migrate deploy
 pnpm_cmd --filter @kjorebok/api build
 pnpm_cmd --filter @kjorebok/web build
 
-sudo_cmd mkdir -p /etc/kjorebok
-sudo_cmd cp "$NGINX_SITE_SRC" "$NGINX_SITE_DEST"
-sudo_cmd cp "$API_SERVICE_SRC" "$API_SERVICE_DEST"
-sudo_cmd cp "$WEB_SERVICE_SRC" "$WEB_SERVICE_DEST"
-sudo_cmd systemctl daemon-reload
-sudo_cmd nginx -t
-sudo_cmd systemctl reload nginx
-sudo_cmd systemctl restart kjorebok-api
-sudo_cmd systemctl restart kjorebok-web
+sudo_cmd "$MKDIR_BIN" -p /etc/kjorebok
+sudo_cmd "$CP_BIN" "$NGINX_SITE_SRC" "$NGINX_SITE_DEST"
+sudo_cmd "$CP_BIN" "$API_SERVICE_SRC" "$API_SERVICE_DEST"
+sudo_cmd "$CP_BIN" "$WEB_SERVICE_SRC" "$WEB_SERVICE_DEST"
+sudo_cmd "$SYSTEMCTL_BIN" daemon-reload
+sudo_cmd "$NGINX_BIN" -t
+sudo_cmd "$SYSTEMCTL_BIN" reload nginx
+sudo_cmd "$SYSTEMCTL_BIN" restart kjorebok-api
+sudo_cmd "$SYSTEMCTL_BIN" restart kjorebok-web
 
 echo
 echo "Service status"
-sudo_cmd systemctl status kjorebok-api --no-pager
-sudo_cmd systemctl status kjorebok-web --no-pager
+sudo_cmd "$SYSTEMCTL_BIN" status kjorebok-api --no-pager
+sudo_cmd "$SYSTEMCTL_BIN" status kjorebok-web --no-pager
 
 echo
 echo "Health checks"
