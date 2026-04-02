@@ -39,7 +39,7 @@ EXPO_PUBLIC_API_URL=http://10.0.2.2:3020
 ## Anbefalt oppstart
 
 ```bash
-pnpm dev:local
+corepack pnpm dev:local
 ```
 
 Det starter:
@@ -50,7 +50,7 @@ Det starter:
 Start mobilappen i en egen terminal:
 
 ```bash
-pnpm dev:mobile
+corepack pnpm dev:mobile
 ```
 
 Trykk `a` i Expo-terminalen for å åpne appen i Android-emulator.
@@ -60,7 +60,21 @@ Trykk `a` i Expo-terminalen for å åpne appen i Android-emulator.
 Hvis du vil kjøre den native Android-byggede dev-klienten direkte:
 
 ```bash
-pnpm dev:mobile:android
+corepack pnpm dev:mobile:android
+```
+
+For fysisk Android-enhet med kabel:
+
+Lokal API via `adb reverse`:
+
+```bash
+corepack pnpm dev:mobile:android:local
+```
+
+Offentlig server for virkelighetsnær testing:
+
+```bash
+corepack pnpm dev:mobile:android:server
 ```
 
 ## Android uten datakabel
@@ -69,8 +83,8 @@ Hvis du vil teste på fysisk Android-enhet uten USB-data, bygg en installérbar 
 
 ```bash
 cd apps/mobile
-eas login
-EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api eas build -p android --profile preview
+npx eas-cli login
+EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api npx eas-cli build -p android --profile preview
 ```
 
 `preview`-profilen lager en `.apk` som kan åpnes direkte på telefonen fra EAS-lenken når bygget er ferdig.
@@ -79,7 +93,7 @@ For Google Play / ordinær release:
 
 ```bash
 cd apps/mobile
-EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api eas build -p android --profile production
+EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api npx eas-cli build -p android --profile production
 ```
 
 Da får du en production Android App Bundle (`.aab`).
@@ -95,5 +109,5 @@ adb devices
 Hvis `adb`, `emulator`, `node` eller `pnpm` ikke finnes i terminalen, last shell-oppsettet på nytt:
 
 ```bash
-source ~/.zshrc
+source ~/.zprofile
 ```

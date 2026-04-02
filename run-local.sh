@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOCAL_NODE_DIR="$(find "$ROOT_DIR/.tools" -maxdepth 1 -type d -name 'node-*' | head -n 1 || true)"
+API_ENV_FILE="$ROOT_DIR/apps/api/.env"
+WEB_ENV_FILE="$ROOT_DIR/apps/web/.env.local"
 
 if [[ -n "$LOCAL_NODE_DIR" && -x "$LOCAL_NODE_DIR/bin/node" ]]; then
   export PATH="$LOCAL_NODE_DIR/bin:$PATH"
@@ -19,6 +21,20 @@ if ! command -v corepack >/dev/null 2>&1; then
   echo "Fant ikke corepack."
   echo "Node-installasjonen ma inkludere corepack for a kjore pnpm."
   exit 1
+fi
+
+if [[ -f "$API_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$API_ENV_FILE"
+  set +a
+fi
+
+if [[ -f "$WEB_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$WEB_ENV_FILE"
+  set +a
 fi
 
 pnpm_cmd() {
