@@ -99,6 +99,7 @@ sudo_cmd "$SYSTEMCTL_BIN" status kjorebok-web --no-pager
 
 echo
 echo "Health checks"
-curl -I http://127.0.0.1:3020/api/health
-curl -I http://127.0.0.1:3021
-curl -I https://kjorebok.nguyenchu.com
+sleep 3
+curl --retry 10 --retry-delay 1 --retry-connrefused -I http://127.0.0.1:3020/api/health
+curl --retry 10 --retry-delay 1 --retry-connrefused -I http://127.0.0.1:3021
+curl --retry 10 --retry-delay 1 --retry-connrefused -I https://kjorebok.nguyenchu.com
