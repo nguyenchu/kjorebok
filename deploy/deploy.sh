@@ -11,6 +11,7 @@ API_SERVICE_DEST="/etc/systemd/system/kjorebok-api.service"
 WEB_SERVICE_DEST="/etc/systemd/system/kjorebok-web.service"
 API_ENV_FILE="/etc/kjorebok/api.env"
 WEB_ENV_FILE="/etc/kjorebok/web.env"
+DOWNLOAD_DIR="/var/www/kjorebok-downloads"
 LOCAL_NODE_DIR="$(find "$ROOT_DIR/.tools" -maxdepth 1 -type d -name 'node-*' | head -n 1 || true)"
 CP_BIN="/usr/bin/cp"
 MKDIR_BIN="/usr/bin/mkdir"
@@ -103,6 +104,7 @@ pnpm_cmd --filter @kjorebok/api build
 pnpm_cmd --filter @kjorebok/web build
 
 sudo_cmd "$MKDIR_BIN" -p /etc/kjorebok
+sudo_cmd "$MKDIR_BIN" -p "$DOWNLOAD_DIR"
 sudo_cmd "$CP_BIN" "$NGINX_SITE_SRC" "$NGINX_SITE_DEST"
 sudo_cmd "$CP_BIN" "$API_SERVICE_SRC" "$API_SERVICE_DEST"
 sudo_cmd "$CP_BIN" "$WEB_SERVICE_SRC" "$WEB_SERVICE_DEST"
