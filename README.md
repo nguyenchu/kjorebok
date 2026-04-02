@@ -2,6 +2,12 @@
 
 ## Lokal utvikling
 
+Bruk Node 22 lokalt for dette repoet.
+
+```bash
+nvm use
+```
+
 ```bash
 corepack pnpm install
 corepack pnpm --filter @kjorebok/api exec prisma generate
@@ -18,6 +24,8 @@ Kjør migrasjonene:
 ```bash
 corepack pnpm --filter @kjorebok/api exec prisma migrate deploy
 ```
+
+Hvis Prisma feiler lokalt med en uklar `Schema engine error`, sjekk først at du faktisk kjører Node 22 og ikke Node 24+.
 
 Lag lokale miljøfiler fra eksemplene:
 

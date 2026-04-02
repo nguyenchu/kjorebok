@@ -11,7 +11,6 @@ export interface GpsPoint {
 
 export interface Trip {
   id: string;
-  vehicleId: string | null;
   userId: string;
   status: TripStatus;
   startedAt: string;
