@@ -49,6 +49,13 @@ if [[ ! -f "$WEB_ENV_FILE" ]]; then
   exit 1
 fi
 
+set -a
+# shellcheck disable=SC1090
+source "$API_ENV_FILE"
+# shellcheck disable=SC1090
+source "$WEB_ENV_FILE"
+set +a
+
 cd "$ROOT_DIR"
 
 DIRTY_STATUS="$(git status --short -- . ':(exclude).codex')"
