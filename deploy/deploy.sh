@@ -46,6 +46,26 @@ sudo_cmd() {
   sudo -n "$@"
 }
 
+wait_for_http() {
+  local url="$1"
+  local attempts="${2:-30}"
+  local delay="${3:-1}"
+
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS -I "$url" >/dev/null; then
+      echo "OK: $url"
+      return 0
+    fi
+
+    echo "Waiting for $url ($i/$attempts)..."
+    sleep "$delay"
+  done
+
+  echo "Health check failed for $url after $attempts attempts" >&2
+  curl -I "$url" || true
+  return 1
+}
+
 echo "Deploying kjorebok from $ROOT_DIR"
 
 if [[ ! -f "$API_ENV_FILE" ]]; then
@@ -99,7 +119,6 @@ sudo_cmd "$SYSTEMCTL_BIN" status kjorebok-web --no-pager
 
 echo
 echo "Health checks"
-sleep 3
-curl --retry 10 --retry-delay 1 --retry-connrefused -I http://127.0.0.1:3020/api/health
-curl --retry 10 --retry-delay 1 --retry-connrefused -I http://127.0.0.1:3021
-curl --retry 10 --retry-delay 1 --retry-connrefused -I https://kjorebok.nguyenchu.com
+wait_for_http http://127.0.0.1:3020/api/health 30 1
+wait_for_http http://127.0.0.1:3021 30 1
+wait_for_http https://kjorebok.nguyenchu.com 30 1
