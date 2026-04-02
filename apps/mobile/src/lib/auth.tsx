@@ -24,15 +24,21 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const USER_KEY = "auth_user";
+const TOKEN_KEY = "token";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
   // Rehydrate from storage on mount
   useEffect(() => {
-    AsyncStorage.getItem(USER_KEY)
-      .then((raw) => {
-        const user = raw ? (JSON.parse(raw) as User) : null;
+    Promise.all([AsyncStorage.getItem(USER_KEY), AsyncStorage.getItem(TOKEN_KEY)])
+      .then(([rawUser, token]) => {
+        const user = rawUser ? (JSON.parse(rawUser) as User) : null;
+        if (token) {
+          void setToken(token);
+        } else {
+          void clearToken();
+        }
         setState({ user, loading: false });
       })
       .catch(() => setState({ user: null, loading: false }));
