@@ -51,9 +51,11 @@ fi
 
 cd "$ROOT_DIR"
 
-if [[ -n "$(git status --short)" ]]; then
+DIRTY_STATUS="$(git status --short -- . ':(exclude).codex')"
+
+if [[ -n "$DIRTY_STATUS" ]]; then
   echo "Working tree is not clean. Commit or stash changes before deploy." >&2
-  git status --short
+  printf '%s\n' "$DIRTY_STATUS"
   exit 1
 fi
 
