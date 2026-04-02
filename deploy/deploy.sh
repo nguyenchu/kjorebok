@@ -37,6 +37,11 @@ pnpm_cmd() {
   exit 1
 }
 
+sudo_cmd() {
+  echo "+ sudo $*"
+  sudo -n "$@"
+}
+
 echo "Deploying kjorebok from $ROOT_DIR"
 
 if [[ ! -f "$API_ENV_FILE" ]]; then
@@ -73,20 +78,20 @@ pnpm_cmd --filter @kjorebok/api exec prisma migrate deploy
 pnpm_cmd --filter @kjorebok/api build
 pnpm_cmd --filter @kjorebok/web build
 
-sudo mkdir -p /etc/kjorebok
-sudo cp "$NGINX_SITE_SRC" "$NGINX_SITE_DEST"
-sudo cp "$API_SERVICE_SRC" "$API_SERVICE_DEST"
-sudo cp "$WEB_SERVICE_SRC" "$WEB_SERVICE_DEST"
-sudo systemctl daemon-reload
-sudo nginx -t
-sudo systemctl reload nginx
-sudo systemctl restart kjorebok-api
-sudo systemctl restart kjorebok-web
+sudo_cmd mkdir -p /etc/kjorebok
+sudo_cmd cp "$NGINX_SITE_SRC" "$NGINX_SITE_DEST"
+sudo_cmd cp "$API_SERVICE_SRC" "$API_SERVICE_DEST"
+sudo_cmd cp "$WEB_SERVICE_SRC" "$WEB_SERVICE_DEST"
+sudo_cmd systemctl daemon-reload
+sudo_cmd nginx -t
+sudo_cmd systemctl reload nginx
+sudo_cmd systemctl restart kjorebok-api
+sudo_cmd systemctl restart kjorebok-web
 
 echo
 echo "Service status"
-sudo systemctl status kjorebok-api --no-pager
-sudo systemctl status kjorebok-web --no-pager
+sudo_cmd systemctl status kjorebok-api --no-pager
+sudo_cmd systemctl status kjorebok-web --no-pager
 
 echo
 echo "Health checks"
