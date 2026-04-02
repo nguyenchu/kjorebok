@@ -7,6 +7,7 @@ Use [deploy/nginx/kjorebok.nguyenchu.com.conf](/home/nguyen/dev/kjorebok/deploy/
 - `https://kjorebok.nguyenchu.com` -> web app on `127.0.0.1:3021`
 - `https://kjorebok.nguyenchu.com/api` -> API on `127.0.0.1:3020/api`
 - `https://kjorebok.nguyenchu.com/api/health` -> API health endpoint
+- `https://kjorebok.nguyenchu.com/download/android.apk` -> static Android APK from `/var/www/kjorebok-downloads/android.apk`
 
 Expected app processes:
 
@@ -57,6 +58,14 @@ Example `/etc/kjorebok/web.env`:
 ```bash
 NEXT_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api
 NEXT_PUBLIC_ANDROID_DOWNLOAD_URL=https://kjorebok.nguyenchu.com/download/android.apk
+```
+
+To publish an APK for download:
+
+```bash
+sudo mkdir -p /var/www/kjorebok-downloads
+sudo cp /path/to/your.apk /var/www/kjorebok-downloads/android.apk
+sudo chmod 644 /var/www/kjorebok-downloads/android.apk
 ```
 
 ## Deploy Script
