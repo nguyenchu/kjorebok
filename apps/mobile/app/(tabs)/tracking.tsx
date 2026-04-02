@@ -61,15 +61,17 @@ export default function TrackingScreen() {
       </View>
 
       <Text style={styles.helperText}>
-        Tracking er nå knyttet til telefonen, ikke til et kjøretøy. Så lenge bakgrunnslokasjon er tillatt, prøver appen å registrere turer automatisk.
+        Så lenge bakgrunnslokasjon er tillatt, prøver appen å registrere turer automatisk mens du er i bevegelse.
       </Text>
 
       <TouchableOpacity style={styles.button} onPress={handleEnable}>
-        <Text style={styles.buttonText}>{tracking ? "Sjekk status" : "Aktiver alltid-på tracking"}</Text>
+        <Text style={styles.buttonText}>
+          {tracking ? "Oppdater trackingstatus" : "Aktiver automatisk tracking"}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={handleSync}>
-        <Text style={[styles.buttonText, styles.secondaryButtonText]}>Synk nå</Text>
+        <Text style={[styles.buttonText, styles.secondaryButtonText]}>Send ventende punkter</Text>
       </TouchableOpacity>
     </View>
   );
