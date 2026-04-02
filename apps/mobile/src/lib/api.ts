@@ -16,14 +16,22 @@ export async function clearToken(): Promise<void> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getToken();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  });
+  const url = `${BASE_URL}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown network error";
+    throw new Error(`Network request failed for ${url}: ${message}`);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = typeof err.error === "string" ? err.error : JSON.stringify(err.error);

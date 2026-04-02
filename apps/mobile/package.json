@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "expo start",
     "android": "expo run:android",
+    "android:device": "expo run:android --device",
+    "android:device:local": "EXPO_PUBLIC_API_URL=http://localhost:3020 expo run:android --device",
+    "android:device:server": "EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api expo run:android --device",
     "ios": "expo run:ios",
     "build:preview": "eas build --profile preview",
     "build:android:apk": "eas build -p android --profile preview",
