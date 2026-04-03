@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3020";
+let unauthorizedHandler: (() => Promise<void> | void) | null = null;
 
 export async function getToken(): Promise<string | null> {
   return AsyncStorage.getItem("token");
@@ -12,6 +13,12 @@ export async function setToken(token: string): Promise<void> {
 
 export async function clearToken(): Promise<void> {
   await AsyncStorage.removeItem("token");
+}
+
+export function setUnauthorizedHandler(
+  handler: (() => Promise<void> | void) | null
+): void {
+  unauthorizedHandler = handler;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -34,6 +41,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 401 && token && unauthorizedHandler) {
+      await unauthorizedHandler();
+    }
     const msg = typeof err.error === "string" ? err.error : JSON.stringify(err.error);
     throw new Error(msg ?? `HTTP ${res.status}`);
   }

@@ -4,9 +4,17 @@ function getBaseUrl(): string {
   return "http://localhost:3020";
 }
 
+let unauthorizedHandler: (() => void | Promise<void>) | null = null;
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
+}
+
+export function setUnauthorizedHandler(
+  handler: (() => void | Promise<void>) | null
+): void {
+  unauthorizedHandler = handler;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -21,6 +29,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 401 && token && unauthorizedHandler) {
+      await unauthorizedHandler();
+    }
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
