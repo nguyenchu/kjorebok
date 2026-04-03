@@ -2,7 +2,6 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { authPlugin } from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
-import { vehicleRoutes } from "./routes/vehicles.js";
 import { tripRoutes } from "./routes/trips.js";
 
 const app = Fastify({ logger: true });
@@ -11,7 +10,6 @@ const apiPrefix = normalizeApiPrefix(process.env.API_PREFIX);
 await app.register(cors, { origin: true });
 await app.register(authPlugin);
 await app.register(authRoutes, { prefix: apiPrefix });
-await app.register(vehicleRoutes, { prefix: apiPrefix });
 await app.register(tripRoutes, { prefix: apiPrefix });
 
 app.get(`${apiPrefix}/health`, async () => ({ ok: true }));

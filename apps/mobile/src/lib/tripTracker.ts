@@ -1,8 +1,7 @@
 /**
  * Auto trip detection using expo-location background tasks.
  *
- * Tracking is intended to stay on continuously once permissions are granted
- * and a vehicle has been selected.
+ * Tracking is intended to stay on continuously once permissions are granted.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
