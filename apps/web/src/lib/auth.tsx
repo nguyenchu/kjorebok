@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import type { User, LoginDto, RegisterDto } from "@kjorebok/shared";
+import { setUnauthorizedHandler } from "./api";
 
 function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_API_URL ?? "/api";
@@ -26,9 +27,20 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
+  const clearSession = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("auth_user");
+    setState({ user: null, loading: false });
+  };
+
   useEffect(() => {
     const raw = localStorage.getItem("auth_user");
     setState({ user: raw ? JSON.parse(raw) : null, loading: false });
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => clearSession());
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   async function post<T>(path: string, body: unknown): Promise<T> {
@@ -59,9 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("auth_user");
-    setState({ user: null, loading: false });
+    clearSession();
   };
 
   return (
