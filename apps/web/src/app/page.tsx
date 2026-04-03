@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl } from "@/lib/config";
 import type { TripSummary } from "@kjorebok/shared";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
@@ -54,7 +53,6 @@ export default function DashboardPage() {
   const activeTrips = trips.filter((trip) => trip.status === "ACTIVE");
   const totalDistance = completedTrips.reduce((sum, trip) => sum + trip.distanceMeters, 0);
   const latestTrip = trips[0] ?? null;
-  const androidDownloadUrl = getAndroidDownloadUrl();
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "2rem 1rem 3rem" }}>
@@ -123,53 +121,6 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-
-      <div
-        style={{
-          background: "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)",
-          color: "#fff",
-          borderRadius: "20px",
-          padding: "1.2rem 1.25rem",
-          marginBottom: "1.25rem",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "1rem",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ maxWidth: 560 }}>
-          <div style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.08em", opacity: 0.75, marginBottom: "0.35rem" }}>
-            Android-app
-          </div>
-          <div style={{ fontSize: "1.1rem", fontWeight: 800, marginBottom: "0.2rem" }}>
-            Registrer turene på mobilen
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.82)", fontSize: "0.95rem" }}>
-            Weben viser oversikt og historikk. Selve turene registreres i Android-appen.
-          </div>
-        </div>
-
-        {androidDownloadUrl ? (
-          <a
-            href={androidDownloadUrl}
-            style={{
-              background: "#fff",
-              color: "#0f172a",
-              padding: "0.8rem 1rem",
-              borderRadius: "999px",
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-            }}
-          >
-            Last ned APK
-          </a>
-        ) : (
-          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: "0.9rem", maxWidth: 280 }}>
-            Legg inn <code style={{ color: "#fff" }}>NEXT_PUBLIC_ANDROID_DOWNLOAD_URL</code> for å vise nedlastingslenke her.
-          </div>
-        )}
-      </div>
 
       {loading && <p style={{ color: "var(--text-muted)" }}>Laster turer...</p>}
       {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
