@@ -90,7 +90,7 @@ export async function tripRoutes(app: FastifyInstance) {
       where: { userId },
       orderBy: { startedAt: "desc" },
       select: {
-        id: true, vehicleId: true, userId: true,
+        id: true, userId: true,
         status: true, startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true,
         createdAt: true, updatedAt: true,
@@ -122,7 +122,6 @@ export async function tripRoutes(app: FastifyInstance) {
     const trip = await prisma.trip.create({
       data: {
         userId,
-        vehicleId: null,
         startedAt: new Date(startPoint.timestamp),
         startAddress: startAddress ?? null,
         route: [startPoint],

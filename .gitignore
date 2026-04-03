@@ -1,6 +1,7 @@
 node_modules
 .turbo
 .tools
+.vscode/
 dist
 .next
 .expo
@@ -8,3 +9,8 @@ dist
 *.env.local
 .DS_Store
 apps/api/src/generated/
+apps/mobile/android/.gradle/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/android/app/.cxx/
+apps/mobile/android/local.properties
