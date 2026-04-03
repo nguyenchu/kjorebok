@@ -26,6 +26,8 @@ const ACTIVE_TRIP_KEY = "tracker_active_trip_id";
 const FAST_COUNT_KEY = "tracker_fast_count";
 const STOP_TIME_KEY = "tracker_stop_time";
 const PENDING_POINTS_KEY = "tracker_pending_points";
+const LAST_POINT_KEY = "tracker_last_point";
+const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 
 let syncPromise: Promise<void> | null = null;
 
@@ -57,6 +59,28 @@ async function setPendingPoints(points: GpsPoint[]): Promise<void> {
   await set(PENDING_POINTS_KEY, JSON.stringify(points.slice(-MAX_PENDING_POINTS)));
 }
 
+async function getLastPoint(): Promise<GpsPoint | null> {
+  const raw = await get(LAST_POINT_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as GpsPoint;
+    if (
+      typeof parsed?.lat === "number" &&
+      typeof parsed?.lng === "number" &&
+      typeof parsed?.timestamp === "string"
+    ) {
+      return parsed;
+    }
+  } catch {}
+
+  return null;
+}
+
+async function setLastPoint(point: GpsPoint): Promise<void> {
+  await set(LAST_POINT_KEY, JSON.stringify(point));
+}
+
 async function enqueuePoint(point: GpsPoint): Promise<void> {
   const points = await getPendingPoints();
   const last = points[points.length - 1];
@@ -72,6 +96,7 @@ async function enqueuePoint(point: GpsPoint): Promise<void> {
 
   points.push(point);
   await setPendingPoints(points);
+  await setLastPoint(point);
 }
 
 function toGpsPoint(loc: Location.LocationObject): GpsPoint {
@@ -144,6 +169,7 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
     });
 
     await clear(PENDING_POINTS_KEY);
+    await setLastPoint(point);
     await set(ACTIVE_TRIP_KEY, trip.id);
     await set(STATE_KEY, "RECORDING");
     await clear(FAST_COUNT_KEY);
@@ -155,9 +181,52 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
   }
 }
 
+async function resetActiveTripState(): Promise<void> {
+  await clear(PENDING_POINTS_KEY);
+  await clear(ACTIVE_TRIP_KEY);
+  await clear(STOP_TIME_KEY);
+  await clear(LAST_POINT_KEY);
+  await set(STATE_KEY, "IDLE");
+}
+
+async function finishTrip(tripId: string, endPoint: GpsPoint): Promise<void> {
+  try {
+    await flushPendingPoints(tripId);
+    const endAddress = await reverseGeocode(endPoint);
+    await api.post(`/trips/${tripId}/end`, { endPoint, endAddress });
+  } finally {
+    await resetActiveTripState();
+  }
+}
+
+async function closeStaleTrip(referenceTimestamp: number): Promise<boolean> {
+  const tripId = await get(ACTIVE_TRIP_KEY);
+  if (!tripId) return false;
+
+  const lastPoint = await getLastPoint();
+  if (!lastPoint) {
+    await resetActiveTripState();
+    return true;
+  }
+
+  const lastPointTime = new Date(lastPoint.timestamp).getTime();
+  if (!Number.isFinite(lastPointTime)) {
+    await resetActiveTripState();
+    return true;
+  }
+
+  if (referenceTimestamp - lastPointTime < STALE_TRIP_TIMEOUT_MS) {
+    return false;
+  }
+
+  await finishTrip(tripId, lastPoint);
+  return true;
+}
+
 async function handleLocation(loc: Location.LocationObject): Promise<void> {
   const point = toGpsPoint(loc);
   const speed = point.speed;
+  await closeStaleTrip(loc.timestamp);
   const state = ((await get(STATE_KEY)) ?? "IDLE") as TrackerState;
 
   switch (state) {
@@ -219,16 +288,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
       const stopTime = Number((await get(STOP_TIME_KEY)) ?? "0");
       if (loc.timestamp - stopTime >= STOP_CONFIRM_MS) {
-        try {
-          await flushPendingPoints(tripId);
-          const endAddress = await reverseGeocode(point);
-          await api.post(`/trips/${tripId}/end`, { endPoint: point, endAddress });
-        } finally {
-          await clear(PENDING_POINTS_KEY);
-          await clear(ACTIVE_TRIP_KEY);
-          await clear(STOP_TIME_KEY);
-          await set(STATE_KEY, "IDLE");
-        }
+        await finishTrip(tripId, point);
       }
       break;
     }
@@ -286,6 +346,8 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
     });
   }
 
+  await closeStaleTrip(Date.now()).catch(() => {});
+
   const tripId = await get(ACTIVE_TRIP_KEY);
   if (tripId) {
     await flushPendingPoints(tripId).catch(() => {});
@@ -295,6 +357,7 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
 }
 
 export async function syncActiveTrip(): Promise<void> {
+  await closeStaleTrip(Date.now());
   const tripId = await get(ACTIVE_TRIP_KEY);
   if (!tripId) return;
   await flushPendingPoints(tripId);
@@ -311,6 +374,7 @@ export async function stopTracking(): Promise<void> {
   await clear(FAST_COUNT_KEY);
   await clear(STOP_TIME_KEY);
   await clear(PENDING_POINTS_KEY);
+  await clear(LAST_POINT_KEY);
 }
 
 export async function getTrackerState(): Promise<{

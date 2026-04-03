@@ -31,6 +31,8 @@ const endTripSchema = z.object({
   endAddress: z.string().trim().min(1).nullable().optional(),
 });
 
+const STALE_ACTIVE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
+
 /** Haversine distance in meters between two lat/lng points */
 function haversine(a: GpsPoint, b: GpsPoint): number {
   const R = 6371000;
@@ -80,12 +82,54 @@ function appendUniquePoints(route: GpsPoint[], points: GpsPoint[]): GpsPoint[] {
   return next;
 }
 
+function getLatestRoutePoint(route: GpsPoint[]): GpsPoint | null {
+  return route.length > 0 ? route[route.length - 1] : null;
+}
+
+async function finalizeStaleActiveTrips(userId: string): Promise<void> {
+  const activeTrips = await prisma.trip.findMany({
+    where: { userId, status: "ACTIVE" },
+    select: {
+      id: true,
+      route: true,
+      updatedAt: true,
+    },
+  });
+
+  const now = Date.now();
+
+  for (const trip of activeTrips) {
+    const route = parseRoute(trip.route);
+    const lastPoint = getLatestRoutePoint(route);
+    const lastActivityTime = lastPoint
+      ? new Date(lastPoint.timestamp).getTime()
+      : trip.updatedAt.getTime();
+
+    if (!Number.isFinite(lastActivityTime)) {
+      continue;
+    }
+
+    if (now - lastActivityTime < STALE_ACTIVE_TRIP_TIMEOUT_MS) {
+      continue;
+    }
+
+    await prisma.trip.update({
+      where: { id: trip.id },
+      data: {
+        status: "COMPLETED",
+        endedAt: lastPoint ? new Date(lastPoint.timestamp) : trip.updatedAt,
+      },
+    });
+  }
+}
+
 export async function tripRoutes(app: FastifyInstance) {
   const auth = { onRequest: [(app as any).authenticate] };
 
   // List trips (summary, no route)
   app.get("/trips", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
     const trips = await prisma.trip.findMany({
       where: { userId },
       orderBy: { startedAt: "desc" },
@@ -102,6 +146,7 @@ export async function tripRoutes(app: FastifyInstance) {
   // Get single trip with route
   app.get("/trips/:id", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
     const trip = await prisma.trip.findFirst({ where: { id, userId } });
     if (!trip) return reply.status(404).send({ error: "Not found" });
@@ -111,6 +156,7 @@ export async function tripRoutes(app: FastifyInstance) {
   // Start a new trip
   app.post("/trips", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
     const body = startTripSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
@@ -133,6 +179,7 @@ export async function tripRoutes(app: FastifyInstance) {
   // Append GPS point(s) to active trip
   app.post("/trips/:id/points", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
     const body = addPointSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
@@ -153,6 +200,7 @@ export async function tripRoutes(app: FastifyInstance) {
 
   app.post("/trips/:id/points/batch", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
     const body = addPointsBatchSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
@@ -179,6 +227,7 @@ export async function tripRoutes(app: FastifyInstance) {
   // End a trip
   app.post("/trips/:id/end", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
     const body = endTripSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
