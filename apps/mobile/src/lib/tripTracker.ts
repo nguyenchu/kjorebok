@@ -7,7 +7,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import { api } from "./api";
+import { api, getToken } from "./api";
 import type { GpsPoint } from "@kjorebok/shared";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
@@ -27,7 +27,31 @@ const FAST_COUNT_KEY = "tracker_fast_count";
 const STOP_TIME_KEY = "tracker_stop_time";
 const PENDING_POINTS_KEY = "tracker_pending_points";
 const LAST_POINT_KEY = "tracker_last_point";
+const LAST_SYNC_AT_KEY = "tracker_last_sync_at";
+const LOG_ENTRIES_KEY = "tracker_log_entries";
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_LOG_ENTRIES = 20;
+
+type LogLevel = "info" | "warn" | "error";
+
+export interface TrackerLogEntry {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+}
+
+export interface TrackerDiagnostics {
+  state: TrackerState;
+  activeTripId: string | null;
+  pendingPoints: number;
+  trackingEnabled: boolean;
+  hasToken: boolean;
+  foregroundPermission: Location.PermissionStatus;
+  backgroundPermission: Location.PermissionStatus;
+  lastPointTimestamp: string | null;
+  lastSyncAt: string | null;
+  recentEvents: TrackerLogEntry[];
+}
 
 let syncPromise: Promise<void> | null = null;
 
@@ -41,6 +65,33 @@ async function set(key: string, value: string): Promise<void> {
 
 async function clear(key: string): Promise<void> {
   await AsyncStorage.removeItem(key);
+}
+
+async function getRecentEvents(): Promise<TrackerLogEntry[]> {
+  const raw = await get(LOG_ENTRIES_KEY);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as TrackerLogEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function appendLog(message: string, level: LogLevel = "info"): Promise<void> {
+  const nextEntry: TrackerLogEntry = {
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+  };
+  const entries = await getRecentEvents();
+  entries.unshift(nextEntry);
+  await set(LOG_ENTRIES_KEY, JSON.stringify(entries.slice(0, MAX_LOG_ENTRIES)));
+}
+
+async function markSyncSuccess(timestamp = new Date().toISOString()): Promise<void> {
+  await set(LAST_SYNC_AT_KEY, timestamp);
 }
 
 async function getPendingPoints(): Promise<GpsPoint[]> {
@@ -150,6 +201,7 @@ async function flushPendingPoints(tripId: string): Promise<void> {
       const batch = points.slice(0, SYNC_BATCH_SIZE);
       await api.post(`/trips/${tripId}/points/batch`, { points: batch });
       await setPendingPoints(points.slice(batch.length));
+      await markSyncSuccess();
     }
   })();
 
@@ -170,11 +222,17 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
 
     await clear(PENDING_POINTS_KEY);
     await setLastPoint(point);
+    await markSyncSuccess();
     await set(ACTIVE_TRIP_KEY, trip.id);
     await set(STATE_KEY, "RECORDING");
     await clear(FAST_COUNT_KEY);
+    await appendLog("Tur startet automatisk.");
     return true;
-  } catch {
+  } catch (error) {
+    await appendLog(
+      `Kunne ikke starte tur${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
+      "error"
+    );
     await set(STATE_KEY, "IDLE");
     await clear(FAST_COUNT_KEY);
     return false;
@@ -194,6 +252,14 @@ async function finishTrip(tripId: string, endPoint: GpsPoint): Promise<void> {
     await flushPendingPoints(tripId);
     const endAddress = await reverseGeocode(endPoint);
     await api.post(`/trips/${tripId}/end`, { endPoint, endAddress });
+    await markSyncSuccess();
+    await appendLog("Tur fullfort og sendt til server.");
+  } catch (error) {
+    await appendLog(
+      `Kunne ikke fullfore tur${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
+      "error"
+    );
+    throw error;
   } finally {
     await resetActiveTripState();
   }
@@ -219,6 +285,7 @@ async function closeStaleTrip(referenceTimestamp: number): Promise<boolean> {
     return false;
   }
 
+  await appendLog("Avsluttet gammel aktiv tur automatisk.");
   await finishTrip(tripId, lastPoint);
   return true;
 }
@@ -234,6 +301,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       if (speed > START_SPEED_MS) {
         await set(STATE_KEY, "DETECTING_START");
         await set(FAST_COUNT_KEY, "1");
+        await appendLog("Oppdaget bevegelse som kan starte tur.");
       }
       break;
     }
@@ -249,6 +317,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       } else {
         await set(STATE_KEY, "IDLE");
         await clear(FAST_COUNT_KEY);
+        await appendLog("Avbrøt turstart fordi farten falt igjen.", "warn");
       }
       break;
     }
@@ -261,11 +330,17 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       }
 
       await enqueuePoint(point);
-      await flushPendingPoints(tripId).catch(() => {});
+      await flushPendingPoints(tripId).catch(async (error) => {
+        await appendLog(
+          `Kunne ikke sende punkter${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
+          "error"
+        );
+      });
 
       if (speed < STOP_SPEED_MS) {
         await set(STATE_KEY, "DETECTING_STOP");
         await set(STOP_TIME_KEY, String(loc.timestamp));
+        await appendLog("Mulig turstopp oppdaget.");
       }
       break;
     }
@@ -282,7 +357,13 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       if (speed > START_SPEED_MS) {
         await set(STATE_KEY, "RECORDING");
         await clear(STOP_TIME_KEY);
-        await flushPendingPoints(tripId).catch(() => {});
+        await flushPendingPoints(tripId).catch(async (error) => {
+          await appendLog(
+            `Kunne ikke sende punkter etter stopp${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
+            "error"
+          );
+        });
+        await appendLog("Tur fortsetter etter kort stopp.");
         return;
       }
 
@@ -297,6 +378,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) {
+    await appendLog(`Bakgrunnsoppgave feilet: ${error.message}`, "error");
     console.error("[TripTracker]", error);
     return;
   }
@@ -307,6 +389,10 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       await handleLocation(loc);
     }
   } catch (taskError) {
+    await appendLog(
+      `Feil under behandling av posisjon${taskError instanceof Error && taskError.message ? `: ${taskError.message}` : "."}`,
+      "error"
+    );
     console.error("[TripTracker]", taskError);
   }
 });
@@ -317,13 +403,20 @@ export async function requestPermissions(): Promise<boolean> {
     fgStatus.status === "granted"
       ? fgStatus
       : await Location.requestForegroundPermissionsAsync();
-  if (fg.status !== "granted") return false;
+  if (fg.status !== "granted") {
+    await appendLog("Mangler forgrunnslokasjon.", "warn");
+    return false;
+  }
 
   const bgStatus = await Location.getBackgroundPermissionsAsync();
   const bg =
     bgStatus.status === "granted"
       ? bgStatus
       : await Location.requestBackgroundPermissionsAsync();
+
+  if (bg.status !== "granted") {
+    await appendLog("Mangler bakgrunnslokasjon.", "warn");
+  }
 
   return bg.status === "granted";
 }
@@ -344,13 +437,21 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
         notificationBody: "Sporing er alltid aktiv for å fange opp turer automatisk.",
       },
     });
+    await appendLog("Bakgrunnssporing ble startet.");
+  } else {
+    await appendLog("Bakgrunnssporing er allerede aktiv.");
   }
 
   await closeStaleTrip(Date.now()).catch(() => {});
 
   const tripId = await get(ACTIVE_TRIP_KEY);
   if (tripId) {
-    await flushPendingPoints(tripId).catch(() => {});
+    await flushPendingPoints(tripId).catch(async (error) => {
+      await appendLog(
+        `Kunne ikke sende ventende punkter ved oppstart${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
+        "error"
+      );
+    });
   }
 
   return true;
@@ -359,8 +460,20 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
 export async function syncActiveTrip(): Promise<void> {
   await closeStaleTrip(Date.now());
   const tripId = await get(ACTIVE_TRIP_KEY);
-  if (!tripId) return;
-  await flushPendingPoints(tripId);
+  if (!tripId) {
+    await appendLog("Ingen aktiv tur å synkronisere.", "warn");
+    return;
+  }
+  try {
+    await flushPendingPoints(tripId);
+    await appendLog("Manuell synkronisering fullfort.");
+  } catch (error) {
+    await appendLog(
+      `Manuell synkronisering feilet${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
+      "error"
+    );
+    throw error;
+  }
 }
 
 export async function stopTracking(): Promise<void> {
@@ -375,20 +488,35 @@ export async function stopTracking(): Promise<void> {
   await clear(STOP_TIME_KEY);
   await clear(PENDING_POINTS_KEY);
   await clear(LAST_POINT_KEY);
+  await appendLog("Bakgrunnssporing ble stoppet.", "warn");
 }
 
-export async function getTrackerState(): Promise<{
-  state: TrackerState;
-  activeTripId: string | null;
-  pendingPoints: number;
-  trackingEnabled: boolean;
-}> {
+export async function getTrackerState(): Promise<TrackerDiagnostics> {
   const trackingEnabled = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
+  const [foregroundPermission, backgroundPermission, lastPoint, lastSyncAt, token, recentEvents] =
+    await Promise.all([
+      Location.getForegroundPermissionsAsync()
+        .then((result) => result.status)
+        .catch(() => "undetermined" as Location.PermissionStatus),
+      Location.getBackgroundPermissionsAsync()
+        .then((result) => result.status)
+        .catch(() => "undetermined" as Location.PermissionStatus),
+      getLastPoint(),
+      get(LAST_SYNC_AT_KEY),
+      getToken(),
+      getRecentEvents(),
+    ]);
 
   return {
     state: ((await get(STATE_KEY)) ?? "IDLE") as TrackerState,
     activeTripId: await get(ACTIVE_TRIP_KEY),
     pendingPoints: (await getPendingPoints()).length,
     trackingEnabled,
+    hasToken: Boolean(token),
+    foregroundPermission,
+    backgroundPermission,
+    lastPointTimestamp: lastPoint?.timestamp ?? null,
+    lastSyncAt,
+    recentEvents,
   };
 }
