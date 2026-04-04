@@ -101,13 +101,11 @@ async function finalizeStaleActiveTrips(userId: string): Promise<void> {
   for (const trip of activeTrips) {
     const route = parseRoute(trip.route);
     const lastPoint = getLatestRoutePoint(route);
-    const lastActivityTime = lastPoint
-      ? new Date(lastPoint.timestamp).getTime()
-      : trip.updatedAt.getTime();
-
-    if (!Number.isFinite(lastActivityTime)) {
-      continue;
-    }
+    const gpsTime = lastPoint ? new Date(lastPoint.timestamp).getTime() : 0;
+    const lastActivityTime = Math.max(
+      Number.isFinite(gpsTime) ? gpsTime : 0,
+      trip.updatedAt.getTime(),
+    );
 
     if (now - lastActivityTime < STALE_ACTIVE_TRIP_TIMEOUT_MS) {
       continue;
@@ -118,6 +116,7 @@ async function finalizeStaleActiveTrips(userId: string): Promise<void> {
       data: {
         status: "COMPLETED",
         endedAt: lastPoint ? new Date(lastPoint.timestamp) : trip.updatedAt,
+        distanceMeters: routeDistance(route),
       },
     });
   }
