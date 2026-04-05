@@ -1,22 +1,29 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --border: #e2e8f0;
-  --text: #1e293b;
-  --text-muted: #64748b;
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
+  --bg: #f4f7fb;
+  --surface: rgba(255, 255, 255, 0.9);
+  --border: #d9e2ec;
+  --text: #172033;
+  --text-muted: #5f6f85;
+  --text-soft: #42546d;
+  --primary: #1d4ed8;
+  --primary-strong: #1e40af;
+  --primary-hover: #1e40af;
   --danger: #dc2626;
-  --radius: 8px;
+  --radius: 14px;
 }
 
 body {
-  font-family: system-ui, sans-serif;
+  font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(circle at top left, rgba(250, 204, 21, 0.14), transparent 26%),
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.11), transparent 24%),
+    linear-gradient(180deg, #f8fbff 0%, #f3f7fb 100%);
 }
 
 a { color: inherit; text-decoration: none; }
