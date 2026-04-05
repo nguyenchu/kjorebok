@@ -120,3 +120,19 @@ The deploy target must already have:
 - `/etc/kjorebok/api.env`
 - `/etc/kjorebok/web.env`
 - sudo rights for nginx/systemd actions used by `deploy/deploy.sh`
+
+## Android APK Publish Workflow
+
+This repo also includes a manual Android publish workflow at
+[`/.github/workflows/publish-android-apk.yml`](/Users/nguyen/dev/kjorebok/.github/workflows/publish-android-apk.yml).
+
+It:
+
+- builds the Android `preview` profile on EAS
+- downloads the generated APK artifact
+- uploads the file to `/var/www/kjorebok-downloads/android.apk`
+- keeps a copy as a GitHub Actions artifact named `android-preview-apk`
+
+Additional required GitHub Actions secret:
+
+- `EXPO_TOKEN`: Expo token with permission to run EAS builds for this project
