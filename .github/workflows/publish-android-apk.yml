@@ -37,6 +37,32 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Determine Android release version
+        working-directory: apps/mobile
+        run: |
+          node <<'EOF'
+          const fs = require("fs");
+
+          const appConfig = JSON.parse(fs.readFileSync("app.json", "utf8"));
+          const configuredVersion = appConfig.expo.version;
+          const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(configuredVersion);
+
+          if (!match) {
+            throw new Error(`Expected expo.version to be semver, got: ${configuredVersion}`);
+          }
+
+          const [, major, minor] = match;
+          const versionCode = process.env.GITHUB_RUN_NUMBER;
+          if (!versionCode) {
+            throw new Error("Missing GITHUB_RUN_NUMBER");
+          }
+
+          const appVersion = `${major}.${minor}.${versionCode}`;
+          fs.writeFileSync(process.env.GITHUB_ENV, `APP_VERSION=${appVersion}\nANDROID_VERSION_CODE=${versionCode}\n`, {
+            flag: "a",
+          });
+          EOF
+
       - name: Set up Expo and EAS
         uses: expo/expo-github-action@v8
         with:
@@ -85,10 +111,9 @@ jobs:
           node <<'EOF'
           const fs = require("fs");
 
-          const appConfig = JSON.parse(fs.readFileSync("app.json", "utf8"));
           const metadata = {
-            version: appConfig.expo.version,
-            versionCode: appConfig.expo.android.versionCode,
+            version: process.env.APP_VERSION,
+            versionCode: Number(process.env.ANDROID_VERSION_CODE),
             publishedAt: new Date().toISOString(),
           };
 
