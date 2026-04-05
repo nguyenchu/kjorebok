@@ -20,6 +20,7 @@
     },
     "android": {
       "package": "no.kjorebok.app",
+      "versionCode": 1,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",

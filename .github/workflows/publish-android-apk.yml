@@ -79,11 +79,29 @@ jobs:
       - name: Fetch APK artifact
         run: curl -fL "${{ steps.artifact.outputs.artifact_url }}" -o android.apk
 
+      - name: Create Android release metadata
+        working-directory: apps/mobile
+        run: |
+          node <<'EOF'
+          const fs = require("fs");
+
+          const appConfig = JSON.parse(fs.readFileSync("app.json", "utf8"));
+          const metadata = {
+            version: appConfig.expo.version,
+            versionCode: appConfig.expo.android.versionCode,
+            publishedAt: new Date().toISOString(),
+          };
+
+          fs.writeFileSync("../../android-latest.json", JSON.stringify(metadata, null, 2) + "\n");
+          EOF
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-preview-apk
-          path: android.apk
+          path: |
+            android.apk
+            android-latest.json
           if-no-files-found: error
 
       - name: Start SSH agent
@@ -117,8 +135,9 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          scp android.apk "$DEPLOY_USER@$DEPLOY_HOST:/tmp/android.apk"
+          scp android.apk android-latest.json "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
           ssh "$DEPLOY_USER@$DEPLOY_HOST" \
             "sudo mkdir -p /var/www/kjorebok-downloads && \
             sudo cp /tmp/android.apk /var/www/kjorebok-downloads/android.apk && \
-            sudo chmod 644 /var/www/kjorebok-downloads/android.apk"
+            sudo cp /tmp/android-latest.json /var/www/kjorebok-downloads/android-latest.json && \
+            sudo chmod 644 /var/www/kjorebok-downloads/android.apk /var/www/kjorebok-downloads/android-latest.json"

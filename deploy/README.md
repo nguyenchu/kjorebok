@@ -8,6 +8,7 @@ Use [deploy/nginx/kjorebok.nguyenchu.com.conf](/home/nguyen/dev/kjorebok/deploy/
 - `https://kjorebok.nguyenchu.com/api` -> API on `127.0.0.1:3020/api`
 - `https://kjorebok.nguyenchu.com/api/health` -> API health endpoint
 - `https://kjorebok.nguyenchu.com/download/android.apk` -> static Android APK from `/var/www/kjorebok-downloads/android.apk`
+- `https://kjorebok.nguyenchu.com/download/android-latest.json` -> Android release metadata from `/var/www/kjorebok-downloads/android-latest.json`
 
 Expected app processes:
 
@@ -131,6 +132,7 @@ It:
 - builds the Android `preview` profile on EAS
 - downloads the generated APK artifact
 - uploads the file to `/var/www/kjorebok-downloads/android.apk`
+- uploads release metadata to `/var/www/kjorebok-downloads/android-latest.json`
 - keeps a copy as a GitHub Actions artifact named `android-preview-apk`
 
 Additional required GitHub Actions secret:
