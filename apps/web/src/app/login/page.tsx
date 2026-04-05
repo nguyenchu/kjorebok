@@ -1,21 +1,50 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl } from "@/lib/config";
+import { getAndroidDownloadUrl, getAndroidMetadataUrl } from "@/lib/config";
 
 type Mode = "login" | "register";
+type AndroidReleaseMetadata = {
+  version: string;
+  versionCode: number;
+  publishedAt: string;
+};
 
 export default function LoginPage() {
   const { login, register } = useAuth();
   const router = useRouter();
   const androidDownloadUrl = getAndroidDownloadUrl();
+  const androidMetadataUrl = getAndroidMetadataUrl();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [androidVersion, setAndroidVersion] = useState<AndroidReleaseMetadata | null>(null);
+
+  useEffect(() => {
+    if (!androidMetadataUrl) return;
+
+    let cancelled = false;
+
+    fetch(androidMetadataUrl, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as AndroidReleaseMetadata;
+      })
+      .then((data) => {
+        if (!cancelled) setAndroidVersion(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAndroidVersion(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [androidMetadataUrl]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,6 +142,11 @@ export default function LoginPage() {
           <p style={{ color: "var(--text-muted)", fontSize: "0.92rem", marginBottom: androidDownloadUrl ? "0.8rem" : 0 }}>
             Turene registreres på mobilen og blir synlige her i weboversikten.
           </p>
+          {androidVersion && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.8rem" }}>
+              Tilgjengelig versjon: {androidVersion.version} (build {androidVersion.versionCode})
+            </p>
+          )}
           {androidDownloadUrl && (
             <a
               href={androidDownloadUrl}
@@ -125,7 +159,7 @@ export default function LoginPage() {
                 fontWeight: 700,
               }}
             >
-              Last ned Android-app
+              Last ned Android-app{androidVersion ? ` v${androidVersion.version}` : ""}
             </a>
           )}
         </div>
