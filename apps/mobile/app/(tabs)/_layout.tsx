@@ -1,15 +1,5 @@
 import { Tabs } from "expo-router";
-import { Text, TouchableOpacity } from "react-native";
-import { useAuth } from "@/lib/auth";
-
-function LogoutButton() {
-  const { logout } = useAuth();
-  return (
-    <TouchableOpacity onPress={logout} style={{ marginRight: 16 }}>
-      <Text style={{ color: "#2563eb", fontWeight: "600" }}>Logg ut</Text>
-    </TouchableOpacity>
-  );
-}
+import { Text } from "react-native";
 
 export default function TabsLayout() {
   return (
@@ -17,21 +7,45 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: true,
         tabBarActiveTintColor: "#2563eb",
-        headerRight: () => <LogoutButton />,
+        tabBarInactiveTintColor: "#94a3b8",
+        tabBarStyle: {
+          borderTopWidth: 0,
+          elevation: 8,
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowRadius: 12,
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 4,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: "600",
+        },
+        headerShadowVisible: false,
+        headerStyle: { backgroundColor: "#f8fafc" },
+        headerTitleStyle: { fontWeight: "700", fontSize: 18, color: "#0f172a" },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: "Turer",
-          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>🚗</Text>,
+          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 22 }}>🚗</Text>,
         }}
       />
       <Tabs.Screen
         name="tracking"
         options={{
           title: "Sporing",
-          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>📍</Text>,
+          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 22 }}>📍</Text>,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profil",
+          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 22 }}>👤</Text>,
         }}
       />
     </Tabs>
