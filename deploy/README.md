@@ -99,13 +99,13 @@ It also stops if `git status --short` is not clean, so deploy does not accidenta
 This repo includes a single production release workflow at
 [`/.github/workflows/deploy.yml`](/Users/nguyen/dev/kjorebok/.github/workflows/deploy.yml).
 
-It runs on pushes to `main` and on manual dispatch.
+It runs manually via `workflow_dispatch`.
 
 Inside the workflow:
 
-- the `deploy_app` job deploys web and API when app-related files changed
-- the `publish_android` job builds and publishes Android when mobile-related files changed
-- a manual run via `workflow_dispatch` runs both jobs
+- choose `app` to deploy web and API
+- choose `android` to build and publish Android
+- choose `both` to run both jobs in one release run
 
 Required GitHub Actions secrets:
 
