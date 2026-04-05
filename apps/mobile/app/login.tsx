@@ -51,16 +51,20 @@ export default function LoginScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>Kjørebok</Text>
-        <Text style={styles.subtitle}>
-          {mode === "login" ? "Logg inn for å fortsette" : "Opprett ny konto"}
-        </Text>
+        <View style={styles.header}>
+          <Text style={styles.logo}>🚗</Text>
+          <Text style={styles.title}>Kjørebok</Text>
+          <Text style={styles.subtitle}>
+            {mode === "login" ? "Logg inn for å fortsette" : "Opprett ny konto"}
+          </Text>
+        </View>
 
         <View style={styles.card}>
           {mode === "register" && (
             <TextInput
               style={styles.input}
               placeholder="Navn"
+              placeholderTextColor="#94a3b8"
               value={name}
               onChangeText={setName}
               autoCapitalize="words"
@@ -70,6 +74,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="E-post"
+            placeholderTextColor="#94a3b8"
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
@@ -79,6 +84,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Passord"
+            placeholderTextColor="#94a3b8"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -87,7 +93,12 @@ export default function LoginScreen() {
 
           {error && <Text style={styles.error}>{error}</Text>}
 
-          <TouchableOpacity style={styles.button} onPress={submit} disabled={loading}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={submit}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
@@ -119,34 +130,42 @@ const styles = StyleSheet.create({
     padding: 24,
     backgroundColor: "#f8fafc",
   },
-  title: { fontSize: 32, fontWeight: "800", textAlign: "center", marginBottom: 8 },
-  subtitle: { color: "#64748b", textAlign: "center", marginBottom: 32 },
+  header: {
+    alignItems: "center",
+    marginBottom: 32,
+  },
+  logo: { fontSize: 48, marginBottom: 12 },
+  title: { fontSize: 32, fontWeight: "800", color: "#0f172a", marginBottom: 8 },
+  subtitle: { color: "#64748b", fontSize: 16 },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    gap: 12,
+    borderRadius: 20,
+    padding: 24,
+    gap: 14,
     shadowColor: "#000",
     shadowOpacity: 0.06,
-    shadowRadius: 10,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
     elevation: 3,
-    marginBottom: 20,
+    marginBottom: 24,
   },
   input: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 15,
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: "#0f172a",
+    backgroundColor: "#f8fafc",
   },
-  error: { color: "#dc2626", fontSize: 13, textAlign: "center" },
+  error: { color: "#dc2626", fontSize: 14, textAlign: "center" },
   button: {
     backgroundColor: "#2563eb",
-    borderRadius: 10,
-    padding: 16,
+    borderRadius: 14,
+    padding: 18,
     alignItems: "center",
     marginTop: 4,
   },
-  buttonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  toggle: { color: "#2563eb", textAlign: "center", fontWeight: "500" },
+  buttonText: { color: "#fff", fontWeight: "700", fontSize: 17 },
+  toggle: { color: "#2563eb", textAlign: "center", fontWeight: "600", fontSize: 15 },
 });

@@ -40,9 +40,9 @@ function TrackingBootstrap() {
 function BootScreen() {
   return (
     <View style={styles.bootScreen}>
-      <ActivityIndicator size="large" color="#2563eb" />
-      <Text style={styles.bootTitle}>Starter Kjørebok</Text>
-      <Text style={styles.bootSubtitle}>Laster inn konto og appdata...</Text>
+      <Text style={styles.bootLogo}>🚗</Text>
+      <Text style={styles.bootTitle}>Kjørebok</Text>
+      <ActivityIndicator size="small" color="#2563eb" style={styles.bootSpinner} />
     </View>
   );
 }
@@ -82,15 +82,16 @@ const styles = StyleSheet.create({
     padding: 24,
     backgroundColor: "#f8fafc",
   },
+  bootLogo: {
+    fontSize: 56,
+    marginBottom: 12,
+  },
   bootTitle: {
-    marginTop: 16,
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 28,
+    fontWeight: "800",
     color: "#0f172a",
   },
-  bootSubtitle: {
-    marginTop: 8,
-    fontSize: 14,
-    color: "#64748b",
+  bootSpinner: {
+    marginTop: 24,
   },
 });
