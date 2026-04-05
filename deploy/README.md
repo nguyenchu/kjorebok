@@ -124,30 +124,26 @@ The deploy target must already have:
 
 ## Android APK Publish
 
-Android APK publishing is intentionally local-first for now.
+This repo includes an Android publish workflow at
+[`/.github/workflows/publish-android-apk.yml`](/Users/nguyen/dev/kjorebok/.github/workflows/publish-android-apk.yml).
 
-Use the helper script:
-
-```bash
-bash deploy/publish-android-apk.sh /path/to/android.apk
-```
+It runs automatically on pushes to `main` when Android-related files change, and can also be started manually.
 
 It will:
 
-- upload the APK to `/var/www/kjorebok-downloads/android.apk`
+- build a release APK directly with Gradle on GitHub Actions
+- publish the APK to `/var/www/kjorebok-downloads/android.apk`
 - generate and upload `/var/www/kjorebok-downloads/android-latest.json`
-- default to `DEPLOY_HOST=kjorebok.nguyenchu.com`
-- default to `DEPLOY_USER=$USER`
+- keep the APK and metadata as a GitHub Actions artifact named `android-release`
 
-Optional environment variables:
+Required GitHub Actions secrets:
 
-- `APP_VERSION`: override the published human-readable version
-- `ANDROID_VERSION_CODE`: override the published Android build number
-- `DEPLOY_HOST`: override the SSH host
-- `DEPLOY_USER`: override the SSH user
+- `DEPLOY_HOST`
+- `DEPLOY_USER`
+- `DEPLOY_SSH_KEY`
 
 Default versioning behavior:
 
 - keep `apps/mobile/app.json` at the desired `major.minor.0` base, for example `1.0.0`
-- the publish script turns that into `major.minor.<timestamp>`
-- `android.versionCode` can use the same value when you build locally
+- the workflow turns that into `major.minor.<github-run-number>`
+- `android.versionCode` is set to the same GitHub run number

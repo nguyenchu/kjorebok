@@ -85,9 +85,11 @@ Offentlig server for virkelighetsnær testing:
 corepack pnpm dev:mobile:android:server
 ```
 
-## Android APK lokalt
+## Android APK
 
-Hvis du vil lage en installérbar APK uten EAS, bygg den lokalt med en eksplisitt versjon:
+Vanlig flyt er nå å la GitHub Actions bygge og publisere Android-APK automatisk når mobilendringer pushes til `main`.
+
+Hvis du vil bygge lokalt i tillegg, bruk en eksplisitt versjon:
 
 ```bash
 export ANDROID_VERSION_CODE=$(date +%s)
