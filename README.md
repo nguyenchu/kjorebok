@@ -85,26 +85,28 @@ Offentlig server for virkelighetsnær testing:
 corepack pnpm dev:mobile:android:server
 ```
 
-## Android uten datakabel
+## Android APK lokalt
 
-Hvis du vil teste på fysisk Android-enhet uten USB-data, bygg en installérbar APK med EAS:
-
-```bash
-cd apps/mobile
-npx eas-cli login
-EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api npx eas-cli build -p android --profile preview
-```
-
-`preview`-profilen lager en `.apk` som kan åpnes direkte på telefonen fra EAS-lenken når bygget er ferdig.
-
-For Google Play / ordinær release:
+Hvis du vil lage en installérbar APK uten EAS, bygg den lokalt med en eksplisitt versjon:
 
 ```bash
-cd apps/mobile
-EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api npx eas-cli build -p android --profile production
+export ANDROID_VERSION_CODE=$(date +%s)
+export APP_VERSION=1.0.$ANDROID_VERSION_CODE
+cd apps/mobile/android
+EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api ./gradlew assembleRelease
 ```
 
-Da får du en production Android App Bundle (`.aab`).
+APK-en havner normalt her:
+
+```bash
+apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+Når APK-en er bygget, publiser den til serveren med:
+
+```bash
+bash deploy/publish-android-apk.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+```
 
 Nyttige kommandoer:
 
