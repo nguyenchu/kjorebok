@@ -1,0 +1,124 @@
+name: Publish Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish preview APK
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      EXPO_PUBLIC_API_URL: https://kjorebok.nguyenchu.com/api
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 10.32.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build preview APK on EAS
+        working-directory: apps/mobile
+        run: eas build --platform android --profile preview --non-interactive --wait --json > build.json
+
+      - name: Download built APK
+        working-directory: apps/mobile
+        run: |
+          node <<'EOF'
+          const fs = require("fs");
+
+          const raw = fs.readFileSync("build.json", "utf8").trim();
+          if (!raw) {
+            throw new Error("Missing build.json output from EAS build.");
+          }
+
+          const parsed = JSON.parse(raw);
+          const build = Array.isArray(parsed) ? parsed[0] : parsed;
+          const artifactUrl =
+            build?.artifacts?.buildUrl ??
+            build?.artifacts?.applicationArchiveUrl ??
+            build?.artifactUrl ??
+            build?.url;
+
+          if (!artifactUrl) {
+            throw new Error(`Could not find APK download URL in build output: ${raw}`);
+          }
+
+          fs.writeFileSync(process.env.GITHUB_OUTPUT, `artifact_url=${artifactUrl}\n`, {
+            flag: "a",
+          });
+          EOF
+        id: artifact
+
+      - name: Fetch APK artifact
+        run: curl -fL "${{ steps.artifact.outputs.artifact_url }}" -o android.apk
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-preview-apk
+          path: android.apk
+          if-no-files-found: error
+
+      - name: Start SSH agent
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' | ssh-add -
+          {
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+          } >> "$GITHUB_ENV"
+
+      - name: Add server host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          if [ -z "$DEPLOY_HOST" ]; then
+            echo "Missing required secret: DEPLOY_HOST" >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload APK to server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          scp android.apk "$DEPLOY_USER@$DEPLOY_HOST:/tmp/android.apk"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo mkdir -p /var/www/kjorebok-downloads && \
+            sudo cp /tmp/android.apk /var/www/kjorebok-downloads/android.apk && \
+            sudo chmod 644 /var/www/kjorebok-downloads/android.apk"
