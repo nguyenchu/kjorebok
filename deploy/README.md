@@ -135,6 +135,12 @@ It:
 - uploads release metadata to `/var/www/kjorebok-downloads/android-latest.json`
 - keeps a copy as a GitHub Actions artifact named `android-preview-apk`
 
+Versioning behavior:
+
+- keep `apps/mobile/app.json` at the desired `major.minor.0` base, for example `1.0.0`
+- the publish workflow automatically turns that into `major.minor.<github-run-number>`
+- `android.versionCode` is automatically set to the same GitHub run number during publish
+
 Additional required GitHub Actions secret:
 
 - `EXPO_TOKEN`: Expo token with permission to run EAS builds for this project
