@@ -122,25 +122,32 @@ The deploy target must already have:
 - `/etc/kjorebok/web.env`
 - sudo rights for nginx/systemd actions used by `deploy/deploy.sh`
 
-## Android APK Publish Workflow
+## Android APK Publish
 
-This repo also includes a manual Android publish workflow at
-[`/.github/workflows/publish-android-apk.yml`](/Users/nguyen/dev/kjorebok/.github/workflows/publish-android-apk.yml).
+Android APK publishing is intentionally local-first for now.
 
-It:
+Use the helper script:
 
-- builds the Android `preview` profile on EAS
-- downloads the generated APK artifact
-- uploads the file to `/var/www/kjorebok-downloads/android.apk`
-- uploads release metadata to `/var/www/kjorebok-downloads/android-latest.json`
-- keeps a copy as a GitHub Actions artifact named `android-preview-apk`
+```bash
+bash deploy/publish-android-apk.sh /path/to/android.apk
+```
 
-Versioning behavior:
+It will:
+
+- upload the APK to `/var/www/kjorebok-downloads/android.apk`
+- generate and upload `/var/www/kjorebok-downloads/android-latest.json`
+- default to `DEPLOY_HOST=kjorebok.nguyenchu.com`
+- default to `DEPLOY_USER=$USER`
+
+Optional environment variables:
+
+- `APP_VERSION`: override the published human-readable version
+- `ANDROID_VERSION_CODE`: override the published Android build number
+- `DEPLOY_HOST`: override the SSH host
+- `DEPLOY_USER`: override the SSH user
+
+Default versioning behavior:
 
 - keep `apps/mobile/app.json` at the desired `major.minor.0` base, for example `1.0.0`
-- the publish workflow automatically turns that into `major.minor.<github-run-number>`
-- `android.versionCode` is automatically set to the same GitHub run number during publish
-
-Additional required GitHub Actions secret:
-
-- `EXPO_TOKEN`: Expo token with permission to run EAS builds for this project
+- the publish script turns that into `major.minor.<timestamp>`
+- `android.versionCode` can use the same value when you build locally
