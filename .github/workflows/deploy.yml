@@ -1,10 +1,17 @@
 name: Deploy Production
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Hva vil du deploye?"
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - app
+          - android
 
 permissions:
   contents: read
@@ -14,44 +21,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Detect changed areas
-    runs-on: ubuntu-latest
-    outputs:
-      app: ${{ steps.filter.outputs.app }}
-      android: ${{ steps.filter.outputs.android }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-
-      - name: Detect changed files
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            app:
-              - 'apps/api/**'
-              - 'apps/web/**'
-              - 'packages/**'
-              - 'deploy/**'
-              - 'compose.yaml'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - 'turbo.json'
-              - '.github/workflows/deploy.yml'
-            android:
-              - 'apps/mobile/**'
-              - 'deploy/publish-android-apk.sh'
-              - '.github/workflows/deploy.yml'
-
   deploy_app:
     name: Deploy web and api
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.app == 'true'
+    if: github.event.inputs.target == 'both' || github.event.inputs.target == 'app'
     runs-on: ubuntu-latest
     environment: production
 
@@ -118,8 +90,7 @@ jobs:
 
   publish_android:
     name: Build and publish Android APK
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.android == 'true'
+    if: github.event.inputs.target == 'both' || github.event.inputs.target == 'android'
     runs-on: ubuntu-latest
     environment: production
 
