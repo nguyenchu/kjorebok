@@ -124,7 +124,7 @@ https://kjorebok.nguyenchu.com/download/android-latest.json
 
 Versjonering:
 
-- sett `apps/mobile/app.json` til den synlige appversjonen du vil publisere, for eksempel `1.0.32` eller `1.1.0`
+- sett `apps/mobile/app.json` til den synlige appversjonen du vil publisere, for eksempel `1.0.33` eller `1.1.0`
 - GitHub Actions bruker denne som Android `versionName`
 - Android `versionCode` settes separat fra workflow-run-nummeret, så det kan fortsette å stige uten å påvirke den synlige semver-versjonen
 
@@ -132,7 +132,7 @@ Hvis du vil bygge lokalt i tillegg:
 
 ```bash
 export ANDROID_VERSION_CODE=$(date +%s)
-export APP_VERSION=1.0.32
+export APP_VERSION=1.0.33
 cd apps/mobile/android
 EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api ./gradlew assembleRelease
 ```

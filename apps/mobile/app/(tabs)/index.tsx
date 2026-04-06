@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { api } from "@/lib/api";
@@ -124,6 +124,7 @@ function EmptyDayItem({ lastKnownAddress }: { lastKnownAddress: string | null })
 
 export default function TripsScreen() {
   const tabBarHeight = useBottomTabBarHeight();
+  const dayTabsRef = useRef<ScrollView>(null);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +159,14 @@ export default function TripsScreen() {
     }
   }, [grouped.length, selectedDayIndex]);
 
+  useEffect(() => {
+    if (grouped.length === 0 || selectedDayIndex !== 0) return;
+
+    requestAnimationFrame(() => {
+      dayTabsRef.current?.scrollToEnd({ animated: false });
+    });
+  }, [grouped.length, selectedDayIndex]);
+
   return (
     <FlatList
       data={selectedTrips}
@@ -169,6 +178,7 @@ export default function TripsScreen() {
         grouped.length > 0 ? (
           <View style={styles.header}>
             <ScrollView
+              ref={dayTabsRef}
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.dayTabs}
