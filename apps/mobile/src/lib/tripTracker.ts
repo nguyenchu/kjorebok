@@ -12,14 +12,14 @@ import type { GpsPoint } from "@kjorebok/shared";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 
-const START_SPEED_MS = 5 / 3.6;
-const STOP_SPEED_MS = 2 / 3.6;
+const START_SPEED_MS = 3 / 3.6;
+const STOP_SPEED_MS = 1 / 3.6;
 const START_CONFIRM_POINTS = 2;
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 25;
 const MAX_PENDING_POINTS = 500;
 const MAX_START_ACCURACY_METERS = 80;
-const MIN_MOVEMENT_DISTANCE_METERS = 35;
+const MIN_MOVEMENT_DISTANCE_METERS = 20;
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 1000;
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";

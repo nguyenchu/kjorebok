@@ -9,7 +9,7 @@
     "ios": {
       "bundleIdentifier": "no.kjorebok.app",
       "infoPlist": {
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Kjørebok trenger tilgang til GPS for å registrere kjøreturer automatisk.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Kjørebok trenger tilgang til GPS for å registrere turer automatisk.",
         "NSLocationAlwaysUsageDescription": "Kjørebok trenger tilgang til GPS i bakgrunnen for å oppdage start og slutt på turer.",
         "NSLocationWhenInUseUsageDescription": "Kjørebok bruker GPS for å vise posisjonen din på kartet.",
         "UIBackgroundModes": [
