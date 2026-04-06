@@ -91,13 +91,14 @@ jobs:
   publish_android:
     name: Build and publish Android APK
     if: github.event.inputs.target == 'both' || github.event.inputs.target == 'android'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     environment: production
 
     env:
       EXPO_PUBLIC_API_URL: https://kjorebok.nguyenchu.com/api
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_DOWNLOAD_DIR: /var/www/kjorebok-downloads
 
     steps:
       - name: Check out repository
@@ -199,9 +200,6 @@ jobs:
 
       - name: Publish APK to server
         run: |
-          scp apps/mobile/android/app/build/outputs/apk/release/app-release.apk android-latest.json "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "sudo mkdir -p /var/www/kjorebok-downloads && \
-            sudo cp /tmp/app-release.apk /var/www/kjorebok-downloads/android.apk && \
-            sudo cp /tmp/android-latest.json /var/www/kjorebok-downloads/android-latest.json && \
-            sudo chmod 644 /var/www/kjorebok-downloads/android.apk /var/www/kjorebok-downloads/android-latest.json"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "test -w '$DEPLOY_DOWNLOAD_DIR'"
+          scp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DOWNLOAD_DIR/android.apk"
+          scp android-latest.json "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DOWNLOAD_DIR/android-latest.json"

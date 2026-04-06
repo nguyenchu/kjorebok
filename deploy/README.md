@@ -140,6 +140,15 @@ Required GitHub Actions secrets:
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
 
+The deploy user must be able to write to the download directory without `sudo`.
+Run this once on the server:
+
+```bash
+sudo mkdir -p /var/www/kjorebok-downloads
+sudo chown -R "$USER":www-data /var/www/kjorebok-downloads
+chmod 775 /var/www/kjorebok-downloads
+```
+
 Default versioning behavior:
 
 - set `apps/mobile/app.json` to the exact user-facing app version you want to publish, for example `1.0.32` or `1.1.0`
