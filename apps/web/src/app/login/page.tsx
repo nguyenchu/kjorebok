@@ -144,7 +144,7 @@ export default function LoginPage() {
           </p>
           {androidVersion && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.8rem" }}>
-              Tilgjengelig versjon: {androidVersion.version} (build {androidVersion.versionCode})
+              Tilgjengelig versjon: {androidVersion.version}
             </p>
           )}
           {androidDownloadUrl && (
