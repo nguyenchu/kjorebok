@@ -6,6 +6,30 @@ function getBaseUrl(): string {
 
 let unauthorizedHandler: (() => void | Promise<void>) | null = null;
 
+function formatApiError(error: unknown, fallback: string): string {
+  if (typeof error === "string") return error;
+  if (!error || typeof error !== "object") return fallback;
+
+  if ("message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  if ("fieldErrors" in error && error.fieldErrors && typeof error.fieldErrors === "object") {
+    const messages = Object.values(error.fieldErrors)
+      .flat()
+      .filter((message): message is string => typeof message === "string");
+
+    if (messages.length > 0) return messages.join(" ");
+  }
+
+  if ("formErrors" in error && Array.isArray(error.formErrors)) {
+    const messages = error.formErrors.filter((message): message is string => typeof message === "string");
+    if (messages.length > 0) return messages.join(" ");
+  }
+
+  return fallback;
+}
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
@@ -32,7 +56,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 401 && token && unauthorizedHandler) {
       await unauthorizedHandler();
     }
-    throw new Error(err.error ?? `HTTP ${res.status}`);
+    throw new Error(formatApiError(err.error, `HTTP ${res.status}`));
   }
   if (res.status === 204) return undefined as T;
   return res.json();

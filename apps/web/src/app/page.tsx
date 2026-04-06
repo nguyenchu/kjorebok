@@ -34,6 +34,16 @@ function formatDayHeader(date: Date): string {
   return format(date, "EEEE d. MMMM", { locale: nb });
 }
 
+function formatDayTabLabel(date: Date): string {
+  if (isToday(date)) return "I dag";
+  if (isYesterday(date)) return "I går";
+  return format(date, "EEEE", { locale: nb });
+}
+
+function formatDayTabMeta(date: Date): string {
+  return format(date, "d. MMM", { locale: nb });
+}
+
 function getTripAddress(trip: TripSummary): string | null {
   return trip.endAddress ?? trip.startAddress ?? null;
 }
@@ -83,6 +93,7 @@ export default function DashboardPage() {
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
 
   useEffect(() => {
     if (authLoading) return;
@@ -94,12 +105,21 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, [user, authLoading, router]);
 
+  const dayLog = buildDayLog(trips);
+
+  useEffect(() => {
+    if (selectedDayIndex >= dayLog.length && selectedDayIndex !== 0) {
+      setSelectedDayIndex(0);
+    }
+  }, [dayLog.length, selectedDayIndex]);
+
   if (authLoading || (!user && !error)) return null;
 
   const activeTrip = trips.find((trip) => trip.status === "ACTIVE") ?? null;
   const totalDistance = trips.reduce((sum, trip) => sum + trip.distanceMeters, 0);
   const latestTrip = trips[0] ?? null;
-  const dayLog = buildDayLog(trips);
+  const selectedDay = dayLog[selectedDayIndex] ?? null;
+  const dayTabs = dayLog.map((day, index) => ({ day, index })).reverse();
 
   return (
     <div style={{ maxWidth: 1120, margin: "0 auto", padding: "2rem 1rem 3.5rem" }}>
@@ -261,34 +281,91 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>
-        {dayLog.map((day) => (
-          <section key={day.day.toISOString()}>
-            <h3 style={{ color: "var(--text-soft)", fontSize: "0.92rem", fontWeight: 800, marginBottom: "0.65rem", textTransform: "capitalize" }}>
-              {formatDayHeader(day.day)}
-            </h3>
-            {day.trips.length === 0 ? (
-              <div
+      {dayLog.length > 0 && (
+        <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", padding: "0.1rem 0 1rem", marginBottom: "1rem" }}>
+          {dayTabs.map(({ day, index }) => {
+            const selected = index === selectedDayIndex;
+
+            return (
+              <button
+                key={day.day.toISOString()}
+                type="button"
+                onClick={() => setSelectedDayIndex(index)}
                 style={{
-                  background: "rgba(255,255,255,0.78)",
-                  border: "1px dashed var(--border)",
+                  position: "relative",
+                  flex: "0 0 auto",
+                  minWidth: "116px",
+                  textAlign: "left",
+                  border: selected ? "1px solid rgba(15, 23, 42, 0.96)" : "1px solid var(--border)",
                   borderRadius: "18px",
-                  padding: "1rem 1.1rem",
-                  color: "var(--text-muted)",
+                  padding: "0.85rem 0.95rem",
+                  background: selected ? "var(--text)" : "rgba(255,255,255,0.86)",
+                  color: selected ? "#f8fafc" : "var(--text)",
+                  cursor: "pointer",
+                  boxShadow: selected ? "0 18px 36px rgba(15, 23, 42, 0.18)" : "0 12px 26px rgba(15, 23, 42, 0.05)",
                 }}
               >
-                <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: "0.25rem" }}>
-                  Ingen turer registrert
+                <div style={{ fontSize: "0.98rem", fontWeight: 850, textTransform: "capitalize", marginBottom: "0.15rem" }}>
+                  {formatDayTabLabel(day.day)}
                 </div>
-                {day.lastKnownAddress && (
-                  <div style={{ fontSize: "0.9rem" }}>
-                    Siste registrerte stopp før dagen: {day.lastKnownAddress}
-                  </div>
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: selected ? "#cbd5e1" : "var(--text-muted)" }}>
+                  {formatDayTabMeta(day.day)}
+                </div>
+                {day.trips.length > 0 && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: "0.55rem",
+                      right: "0.55rem",
+                      minWidth: "1.35rem",
+                      height: "1.35rem",
+                      padding: "0 0.4rem",
+                      borderRadius: "999px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: selected ? "#38bdf8" : "#e0f2fe",
+                      color: selected ? "#082f49" : "#0369a1",
+                      fontSize: "0.72rem",
+                      fontWeight: 850,
+                    }}
+                  >
+                    {day.trips.length}
+                  </span>
                 )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {selectedDay && (
+        <section>
+          <h3 style={{ color: "var(--text-soft)", fontSize: "0.92rem", fontWeight: 800, marginBottom: "0.65rem", textTransform: "capitalize" }}>
+            {formatDayHeader(selectedDay.day)}
+          </h3>
+          {selectedDay.trips.length === 0 ? (
+            <div
+              style={{
+                background: "rgba(255,255,255,0.78)",
+                border: "1px dashed var(--border)",
+                borderRadius: "18px",
+                padding: "1rem 1.1rem",
+                color: "var(--text-muted)",
+              }}
+            >
+              <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: "0.25rem" }}>
+                Ingen turer registrert
               </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
-                {day.trips.map((trip) => (
+              {selectedDay.lastKnownAddress && (
+                <div style={{ fontSize: "0.9rem" }}>
+                  Siste registrerte stopp før dagen: {selectedDay.lastKnownAddress}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+              {selectedDay.trips.map((trip) => (
                   <div
                     key={trip.id}
                     style={{
@@ -339,12 +416,11 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
-        ))}
-      </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
