@@ -3,22 +3,42 @@ import { View, Text, FlatList, StyleSheet, RefreshControl } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { api } from "@/lib/api";
 import type { TripSummary } from "@kjorebok/shared";
-import { format, isToday, isYesterday, parseISO } from "date-fns";
+import { addDays, differenceInCalendarDays, format, isToday, isYesterday, parseISO, startOfDay } from "date-fns";
 import { nb } from "date-fns/locale";
+
+type DayGroup = {
+  day: Date;
+  trips: TripSummary[];
+  lastKnownAddress: string | null;
+};
 
 function formatDistance(meters: number) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
 }
 
-function formatDayHeader(dateStr: string): string {
-  const date = parseISO(dateStr);
+function formatDayHeader(date: Date): string {
   if (isToday(date)) return "I dag";
   if (isYesterday(date)) return "I går";
   return format(date, "EEEE d. MMMM", { locale: nb });
 }
 
-function groupTripsByDay(trips: TripSummary[]): { day: string; trips: TripSummary[] }[] {
+function getTripAddress(trip: TripSummary): string | null {
+  return trip.endAddress ?? trip.startAddress ?? null;
+}
+
+function groupTripsByDay(trips: TripSummary[]): DayGroup[] {
+  if (trips.length === 0) return [];
+
+  const today = startOfDay(new Date());
+  const earliestTripDay = startOfDay(
+    trips.reduce((earliest, trip) => {
+      const tripDate = parseISO(trip.startedAt);
+      return tripDate < earliest ? tripDate : earliest;
+    }, parseISO(trips[0].startedAt)),
+  );
+  const maxDays = Math.min(differenceInCalendarDays(today, earliestTripDay), 13);
   const groups: Map<string, TripSummary[]> = new Map();
+
   for (const trip of trips) {
     const key = format(parseISO(trip.startedAt), "yyyy-MM-dd");
     const existing = groups.get(key);
@@ -28,10 +48,20 @@ function groupTripsByDay(trips: TripSummary[]): { day: string; trips: TripSummar
       groups.set(key, [trip]);
     }
   }
-  return Array.from(groups.entries()).map(([, trips]) => ({
-    day: trips[0].startedAt,
-    trips,
-  }));
+
+  return Array.from({ length: maxDays + 1 }, (_, offset) => {
+    const day = addDays(today, -offset);
+    const key = format(day, "yyyy-MM-dd");
+    const dayTrips = groups.get(key) ?? [];
+    const dayStart = day.getTime();
+    const previousTrip = trips.find((trip) => parseISO(trip.startedAt).getTime() < dayStart && getTripAddress(trip));
+
+    return {
+      day,
+      trips: dayTrips,
+      lastKnownAddress: previousTrip ? getTripAddress(previousTrip) : null,
+    };
+  });
 }
 
 function TripTimelineItem({ trip, isLast }: { trip: TripSummary; isLast: boolean }) {
@@ -71,6 +101,17 @@ function TripTimelineItem({ trip, isLast }: { trip: TripSummary; isLast: boolean
   );
 }
 
+function EmptyDayItem({ lastKnownAddress }: { lastKnownAddress: string | null }) {
+  return (
+    <View style={styles.emptyDayCard}>
+      <Text style={styles.emptyDayTitle}>Ingen turer registrert</Text>
+      {lastKnownAddress && (
+        <Text style={styles.emptyDayText}>Siste registrerte stopp før dagen: {lastKnownAddress}</Text>
+      )}
+    </View>
+  );
+}
+
 export default function TripsScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const [trips, setTrips] = useState<TripSummary[]>([]);
@@ -100,7 +141,7 @@ export default function TripsScreen() {
   return (
     <FlatList
       data={grouped}
-      keyExtractor={(group) => group.day}
+      keyExtractor={(group) => group.day.toISOString()}
       style={styles.container}
       contentContainerStyle={[styles.list, { paddingBottom: tabBarHeight + 24 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -109,20 +150,24 @@ export default function TripsScreen() {
           <Text style={styles.emptyIcon}>🚗</Text>
           <Text style={styles.emptyTitle}>Ingen turer ennå</Text>
           <Text style={styles.emptySubtitle}>
-            {error ?? "Turene dine vises her når du begynner å kjøre"}
+            {error ?? "Turene dine vises her når mobilen registrerer bevegelse"}
           </Text>
         </View>
       }
       renderItem={({ item: group }) => (
         <View style={styles.dayGroup}>
           <Text style={styles.dayHeader}>{formatDayHeader(group.day)}</Text>
-          {group.trips.map((trip, i) => (
-            <TripTimelineItem
-              key={trip.id}
-              trip={trip}
-              isLast={i === group.trips.length - 1}
-            />
-          ))}
+          {group.trips.length === 0 ? (
+            <EmptyDayItem lastKnownAddress={group.lastKnownAddress} />
+          ) : (
+            group.trips.map((trip, i) => (
+              <TripTimelineItem
+                key={trip.id}
+                trip={trip}
+                isLast={i === group.trips.length - 1}
+              />
+            ))
+          )}
         </View>
       )}
     />
@@ -190,6 +235,16 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
+  emptyDayCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderStyle: "dashed",
+  },
+  emptyDayTitle: { fontSize: 15, fontWeight: "700", color: "#0f172a", marginBottom: 4 },
+  emptyDayText: { fontSize: 14, color: "#64748b", lineHeight: 20 },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",

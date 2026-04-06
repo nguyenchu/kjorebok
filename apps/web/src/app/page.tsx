@@ -4,8 +4,14 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { TripSummary } from "@kjorebok/shared";
-import { format } from "date-fns";
+import { addDays, differenceInCalendarDays, format, isToday, isYesterday, parseISO, startOfDay } from "date-fns";
 import { nb } from "date-fns/locale";
+
+type DayLog = {
+  day: Date;
+  trips: TripSummary[];
+  lastKnownAddress: string | null;
+};
 
 function formatDistance(meters: number) {
   return meters >= 1000
@@ -20,6 +26,55 @@ function formatDuration(start: string, end: string | null) {
   const mins = Math.round((e.getTime() - s.getTime()) / 60000);
   if (mins < 60) return `${mins} min`;
   return `${Math.floor(mins / 60)}t ${mins % 60}min`;
+}
+
+function formatDayHeader(date: Date): string {
+  if (isToday(date)) return "I dag";
+  if (isYesterday(date)) return "I går";
+  return format(date, "EEEE d. MMMM", { locale: nb });
+}
+
+function getTripAddress(trip: TripSummary): string | null {
+  return trip.endAddress ?? trip.startAddress ?? null;
+}
+
+function buildDayLog(trips: TripSummary[]): DayLog[] {
+  if (trips.length === 0) return [];
+
+  const today = startOfDay(new Date());
+  const earliestTripDay = startOfDay(
+    trips.reduce((earliest, trip) => {
+      const tripDate = parseISO(trip.startedAt);
+      return tripDate < earliest ? tripDate : earliest;
+    }, parseISO(trips[0].startedAt)),
+  );
+  const maxDays = Math.min(differenceInCalendarDays(today, earliestTripDay), 13);
+  const tripsByDay = new Map<string, TripSummary[]>();
+
+  for (const trip of trips) {
+    const key = format(parseISO(trip.startedAt), "yyyy-MM-dd");
+    const existing = tripsByDay.get(key);
+    if (existing) {
+      existing.push(trip);
+    } else {
+      tripsByDay.set(key, [trip]);
+    }
+  }
+
+  return Array.from({ length: maxDays + 1 }, (_, offset) => {
+    const day = addDays(today, -offset);
+    const key = format(day, "yyyy-MM-dd");
+    const dayTrips = tripsByDay.get(key) ?? [];
+    const dayStart = day.getTime();
+    const lastKnownAddress =
+      dayTrips.length > 0
+        ? null
+        : (trips.find((trip) => parseISO(trip.startedAt).getTime() < dayStart && getTripAddress(trip))?.endAddress ??
+          trips.find((trip) => parseISO(trip.startedAt).getTime() < dayStart && getTripAddress(trip))?.startAddress ??
+          null);
+
+    return { day, trips: dayTrips, lastKnownAddress };
+  });
 }
 
 export default function DashboardPage() {
@@ -44,6 +99,7 @@ export default function DashboardPage() {
   const activeTrip = trips.find((trip) => trip.status === "ACTIVE") ?? null;
   const totalDistance = trips.reduce((sum, trip) => sum + trip.distanceMeters, 0);
   const latestTrip = trips[0] ?? null;
+  const dayLog = buildDayLog(trips);
 
   return (
     <div style={{ maxWidth: 1120, margin: "0 auto", padding: "2rem 1rem 3.5rem" }}>
@@ -205,58 +261,88 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
-        {trips.map((trip) => (
-          <div
-            key={trip.id}
-            style={{
-              background:
-                trip.status === "ACTIVE"
-                  ? "linear-gradient(135deg, rgba(219,234,254,0.72) 0%, rgba(255,255,255,0.98) 100%)"
-                  : "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.95) 100%)",
-              border: trip.status === "ACTIVE" ? "1px solid rgba(96, 165, 250, 0.55)" : "1px solid var(--border)",
-              borderRadius: "22px",
-              padding: "1.05rem 1.2rem",
-              display: "grid",
-              gridTemplateColumns: "1fr auto",
-              gap: "0.8rem",
-              alignItems: "center",
-              boxShadow: "0 18px 38px rgba(15, 23, 42, 0.06)",
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.3rem" }}>
-                {trip.startAddress ?? "Ukjent start"} → {trip.endAddress ?? "Ukjent slutt"}
-              </div>
-              <div style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-                {format(new Date(trip.startedAt), "d. MMMM yyyy HH:mm", { locale: nb })} ·{" "}
-                {formatDuration(trip.startedAt, trip.endedAt)}
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontWeight: 800, fontSize: "1.25rem", letterSpacing: "-0.03em" }}>
-                {formatDistance(trip.distanceMeters)}
-              </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>
+        {dayLog.map((day) => (
+          <section key={day.day.toISOString()}>
+            <h3 style={{ color: "var(--text-soft)", fontSize: "0.92rem", fontWeight: 800, marginBottom: "0.65rem", textTransform: "capitalize" }}>
+              {formatDayHeader(day.day)}
+            </h3>
+            {day.trips.length === 0 ? (
               <div
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginTop: "0.4rem",
-                  padding: "0.28rem 0.6rem",
-                  borderRadius: "999px",
-                  background: trip.status === "ACTIVE" ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.14)",
-                  fontSize: "0.74rem",
-                  fontWeight: 700,
-                  color: trip.status === "ACTIVE" ? "var(--primary-strong)" : "var(--text-soft)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  background: "rgba(255,255,255,0.78)",
+                  border: "1px dashed var(--border)",
+                  borderRadius: "18px",
+                  padding: "1rem 1.1rem",
+                  color: "var(--text-muted)",
                 }}
               >
-                {trip.status === "ACTIVE" ? "Aktiv" : "Fullført"}
+                <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: "0.25rem" }}>
+                  Ingen turer registrert
+                </div>
+                {day.lastKnownAddress && (
+                  <div style={{ fontSize: "0.9rem" }}>
+                    Siste registrerte stopp før dagen: {day.lastKnownAddress}
+                  </div>
+                )}
               </div>
-            </div>
-          </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+                {day.trips.map((trip) => (
+                  <div
+                    key={trip.id}
+                    style={{
+                      background:
+                        trip.status === "ACTIVE"
+                          ? "linear-gradient(135deg, rgba(219,234,254,0.72) 0%, rgba(255,255,255,0.98) 100%)"
+                          : "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.95) 100%)",
+                      border: trip.status === "ACTIVE" ? "1px solid rgba(96, 165, 250, 0.55)" : "1px solid var(--border)",
+                      borderRadius: "22px",
+                      padding: "1.05rem 1.2rem",
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto",
+                      gap: "0.8rem",
+                      alignItems: "center",
+                      boxShadow: "0 18px 38px rgba(15, 23, 42, 0.06)",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.3rem" }}>
+                        {trip.startAddress ?? "Ukjent start"} → {trip.endAddress ?? "Ukjent slutt"}
+                      </div>
+                      <div style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                        {format(new Date(trip.startedAt), "HH:mm", { locale: nb })} ·{" "}
+                        {formatDuration(trip.startedAt, trip.endedAt)}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontWeight: 800, fontSize: "1.25rem", letterSpacing: "-0.03em" }}>
+                        {formatDistance(trip.distanceMeters)}
+                      </div>
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginTop: "0.4rem",
+                          padding: "0.28rem 0.6rem",
+                          borderRadius: "999px",
+                          background: trip.status === "ACTIVE" ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.14)",
+                          fontSize: "0.74rem",
+                          fontWeight: 700,
+                          color: trip.status === "ACTIVE" ? "var(--primary-strong)" : "var(--text-soft)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.05em",
+                        }}
+                      >
+                        {trip.status === "ACTIVE" ? "Aktiv" : "Fullført"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         ))}
       </div>
     </div>
