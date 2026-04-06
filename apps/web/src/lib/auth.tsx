@@ -24,6 +24,30 @@ interface AuthContextValue extends AuthState {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function formatApiError(error: unknown, fallback: string): string {
+  if (typeof error === "string") return error;
+  if (!error || typeof error !== "object") return fallback;
+
+  if ("message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  if ("fieldErrors" in error && error.fieldErrors && typeof error.fieldErrors === "object") {
+    const messages = Object.values(error.fieldErrors)
+      .flat()
+      .filter((message): message is string => typeof message === "string");
+
+    if (messages.length > 0) return messages.join(" ");
+  }
+
+  if ("formErrors" in error && Array.isArray(error.formErrors)) {
+    const messages = error.formErrors.filter((message): message is string => typeof message === "string");
+    if (messages.length > 0) return messages.join(" ");
+  }
+
+  return fallback;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
@@ -51,7 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error ?? `HTTP ${res.status}`);
+      throw new Error(formatApiError(err.error, `HTTP ${res.status}`));
     }
     return res.json();
   }

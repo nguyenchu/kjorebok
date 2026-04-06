@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, FlatList, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { api } from "@/lib/api";
 import type { TripSummary } from "@kjorebok/shared";
@@ -20,6 +20,16 @@ function formatDayHeader(date: Date): string {
   if (isToday(date)) return "I dag";
   if (isYesterday(date)) return "I går";
   return format(date, "EEEE d. MMMM", { locale: nb });
+}
+
+function formatDayTabLabel(date: Date): string {
+  if (isToday(date)) return "I dag";
+  if (isYesterday(date)) return "I går";
+  return format(date, "EEEE", { locale: nb });
+}
+
+function formatDayTabMeta(date: Date): string {
+  return format(date, "d. MMM", { locale: nb });
 }
 
 function getTripAddress(trip: TripSummary): string | null {
@@ -117,6 +127,7 @@ export default function TripsScreen() {
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -137,38 +148,80 @@ export default function TripsScreen() {
   };
 
   const grouped = groupTripsByDay(trips);
+  const dayTabs = grouped.map((group, index) => ({ group, index })).reverse();
+  const selectedGroup = grouped[selectedDayIndex] ?? null;
+  const selectedTrips = selectedGroup?.trips ?? [];
+
+  useEffect(() => {
+    if (selectedDayIndex >= grouped.length) {
+      setSelectedDayIndex(0);
+    }
+  }, [grouped.length, selectedDayIndex]);
 
   return (
     <FlatList
-      data={grouped}
-      keyExtractor={(group) => group.day.toISOString()}
+      data={selectedTrips}
+      keyExtractor={(trip) => trip.id}
       style={styles.container}
       contentContainerStyle={[styles.list, { paddingBottom: tabBarHeight + 24 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      ListEmptyComponent={
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>🚗</Text>
-          <Text style={styles.emptyTitle}>Ingen turer ennå</Text>
-          <Text style={styles.emptySubtitle}>
-            {error ?? "Turene dine vises her når mobilen registrerer bevegelse"}
-          </Text>
-        </View>
+      ListHeaderComponent={
+        grouped.length > 0 ? (
+          <View style={styles.header}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.dayTabs}
+            >
+              {dayTabs.map(({ group, index }) => {
+                const isSelected = index === selectedDayIndex;
+
+                return (
+                  <TouchableOpacity
+                    key={group.day.toISOString()}
+                    style={[styles.dayTab, isSelected && styles.dayTabSelected]}
+                    onPress={() => setSelectedDayIndex(index)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.dayTabLabel, isSelected && styles.dayTabLabelSelected]}>
+                      {formatDayTabLabel(group.day)}
+                    </Text>
+                    <Text style={[styles.dayTabMeta, isSelected && styles.dayTabMetaSelected]}>
+                      {formatDayTabMeta(group.day)}
+                    </Text>
+                    {group.trips.length > 0 && (
+                      <View style={[styles.dayTabBadge, isSelected && styles.dayTabBadgeSelected]}>
+                        <Text style={[styles.dayTabBadgeText, isSelected && styles.dayTabBadgeTextSelected]}>
+                          {group.trips.length}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            {selectedGroup && <Text style={styles.dayHeader}>{formatDayHeader(selectedGroup.day)}</Text>}
+          </View>
+        ) : null
       }
-      renderItem={({ item: group }) => (
-        <View style={styles.dayGroup}>
-          <Text style={styles.dayHeader}>{formatDayHeader(group.day)}</Text>
-          {group.trips.length === 0 ? (
-            <EmptyDayItem lastKnownAddress={group.lastKnownAddress} />
-          ) : (
-            group.trips.map((trip, i) => (
-              <TripTimelineItem
-                key={trip.id}
-                trip={trip}
-                isLast={i === group.trips.length - 1}
-              />
-            ))
-          )}
-        </View>
+      ListEmptyComponent={
+        grouped.length > 0 && selectedGroup ? (
+          <EmptyDayItem lastKnownAddress={selectedGroup.lastKnownAddress} />
+        ) : (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyIcon}>🚗</Text>
+            <Text style={styles.emptyTitle}>Ingen turer ennå</Text>
+            <Text style={styles.emptySubtitle}>
+              {error ?? "Turene dine vises her når mobilen registrerer bevegelse"}
+            </Text>
+          </View>
+        )
+      }
+      renderItem={({ item: trip, index }) => (
+        <TripTimelineItem
+          trip={trip}
+          isLast={index === selectedTrips.length - 1}
+        />
       )}
     />
   );
@@ -177,7 +230,46 @@ export default function TripsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
   list: { padding: 16, paddingBottom: 32 },
-  dayGroup: { marginBottom: 24 },
+  header: { marginBottom: 16 },
+  dayTabs: { gap: 10, paddingRight: 16, paddingBottom: 16 },
+  dayTab: {
+    minWidth: 94,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    position: "relative",
+  },
+  dayTabSelected: {
+    backgroundColor: "#0f172a",
+    borderColor: "#0f172a",
+  },
+  dayTabLabel: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0f172a",
+    textTransform: "capitalize",
+    marginBottom: 2,
+  },
+  dayTabLabelSelected: { color: "#fff" },
+  dayTabMeta: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
+  dayTabMetaSelected: { color: "#cbd5e1" },
+  dayTabBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#e0f2fe",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  dayTabBadgeSelected: { backgroundColor: "#38bdf8" },
+  dayTabBadgeText: { fontSize: 11, fontWeight: "800", color: "#0369a1" },
+  dayTabBadgeTextSelected: { color: "#082f49" },
   dayHeader: {
     fontSize: 15,
     fontWeight: "700",

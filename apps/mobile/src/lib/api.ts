@@ -3,6 +3,30 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3020";
 let unauthorizedHandler: (() => Promise<void> | void) | null = null;
 
+function formatApiError(error: unknown, fallback: string): string {
+  if (typeof error === "string") return error;
+  if (!error || typeof error !== "object") return fallback;
+
+  if ("message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  if ("fieldErrors" in error && error.fieldErrors && typeof error.fieldErrors === "object") {
+    const messages = Object.values(error.fieldErrors)
+      .flat()
+      .filter((message): message is string => typeof message === "string");
+
+    if (messages.length > 0) return messages.join(" ");
+  }
+
+  if ("formErrors" in error && Array.isArray(error.formErrors)) {
+    const messages = error.formErrors.filter((message): message is string => typeof message === "string");
+    if (messages.length > 0) return messages.join(" ");
+  }
+
+  return fallback;
+}
+
 export async function getToken(): Promise<string | null> {
   return AsyncStorage.getItem("token");
 }
@@ -44,8 +68,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 401 && token && unauthorizedHandler) {
       await unauthorizedHandler();
     }
-    const msg = typeof err.error === "string" ? err.error : JSON.stringify(err.error);
-    throw new Error(msg ?? `HTTP ${res.status}`);
+    throw new Error(formatApiError(err.error, `HTTP ${res.status}`));
   }
   if (res.status === 204) return undefined as T;
   return res.json();
