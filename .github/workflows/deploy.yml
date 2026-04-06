@@ -91,7 +91,7 @@ jobs:
   publish_android:
     name: Build and publish Android APK
     if: github.event.inputs.target == 'both' || github.event.inputs.target == 'android'
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, mac-mini]
     environment: production
 
     env:
