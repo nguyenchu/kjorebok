@@ -7,6 +7,7 @@ APP_JSON_PATH="$ROOT_DIR/apps/mobile/app.json"
 APK_PATH="${1:-}"
 DEPLOY_HOST="${DEPLOY_HOST:-kjorebok.nguyenchu.com}"
 DEPLOY_USER="${DEPLOY_USER:-$USER}"
+DEPLOY_DOWNLOAD_DIR="${DEPLOY_DOWNLOAD_DIR:-/var/www/kjorebok-downloads}"
 TMP_METADATA="$(mktemp)"
 
 if [[ -z "$APK_PATH" ]]; then
@@ -54,11 +55,8 @@ echo "  version: $APP_VERSION"
 echo "  versionCode: $ANDROID_VERSION_CODE"
 echo "  target: $DEPLOY_USER@$DEPLOY_HOST"
 
-scp "$APK_PATH" "$TMP_METADATA" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
-ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-  "sudo mkdir -p /var/www/kjorebok-downloads && \
-  sudo cp /tmp/$(basename "$APK_PATH") /var/www/kjorebok-downloads/android.apk && \
-  sudo cp /tmp/$(basename "$TMP_METADATA") /var/www/kjorebok-downloads/android-latest.json && \
-  sudo chmod 644 /var/www/kjorebok-downloads/android.apk /var/www/kjorebok-downloads/android-latest.json"
+ssh "$DEPLOY_USER@$DEPLOY_HOST" "test -w '$DEPLOY_DOWNLOAD_DIR'"
+scp "$APK_PATH" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DOWNLOAD_DIR/android.apk"
+scp "$TMP_METADATA" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DOWNLOAD_DIR/android-latest.json"
 
 rm -f "$TMP_METADATA"

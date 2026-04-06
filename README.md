@@ -99,13 +99,40 @@ corepack pnpm dev:mobile:android:server
 
 ## Android APK
 
-Vanlig flyt er nå å la GitHub Actions bygge og publisere Android-APK automatisk når mobilendringer pushes til `main`.
+Anbefalt flyt er å la GitHub Actions bygge og publisere Android-APK fra
+`Deploy Production`-workflowen i GitHub.
 
-Hvis du vil bygge lokalt i tillegg, bruk en eksplisitt versjon:
+Kort flyt:
+
+1. push endringene til `main`
+2. åpne GitHub Actions
+3. kjør `Deploy Production`
+4. velg `android` hvis du bare vil publisere APK
+5. velg `both` hvis du også vil deploye web/API
+
+Publisert APK blir tilgjengelig her:
+
+```text
+https://kjorebok.nguyenchu.com/download/android.apk
+```
+
+Tilgjengelig metadata blir publisert her:
+
+```text
+https://kjorebok.nguyenchu.com/download/android-latest.json
+```
+
+Versjonering:
+
+- sett `apps/mobile/app.json` til den synlige appversjonen du vil publisere, for eksempel `1.0.32` eller `1.1.0`
+- GitHub Actions bruker denne som Android `versionName`
+- Android `versionCode` settes separat fra workflow-run-nummeret, så det kan fortsette å stige uten å påvirke den synlige semver-versjonen
+
+Hvis du vil bygge lokalt i tillegg:
 
 ```bash
 export ANDROID_VERSION_CODE=$(date +%s)
-export APP_VERSION=1.0.$ANDROID_VERSION_CODE
+export APP_VERSION=1.0.32
 cd apps/mobile/android
 EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api ./gradlew assembleRelease
 ```
