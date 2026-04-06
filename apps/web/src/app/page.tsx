@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -90,6 +90,7 @@ function buildDayLog(trips: TripSummary[]): DayLog[] {
 export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
+  const dayTabsRef = useRef<HTMLDivElement>(null);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +111,15 @@ export default function DashboardPage() {
   useEffect(() => {
     if (selectedDayIndex >= dayLog.length && selectedDayIndex !== 0) {
       setSelectedDayIndex(0);
+    }
+  }, [dayLog.length, selectedDayIndex]);
+
+  useEffect(() => {
+    if (dayLog.length === 0 || selectedDayIndex !== 0) return;
+
+    const dayTabs = dayTabsRef.current;
+    if (dayTabs) {
+      dayTabs.scrollTo({ left: dayTabs.scrollWidth, behavior: "instant" });
     }
   }, [dayLog.length, selectedDayIndex]);
 
@@ -282,7 +292,7 @@ export default function DashboardPage() {
       </div>
 
       {dayLog.length > 0 && (
-        <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", padding: "0.1rem 0 1rem", marginBottom: "1rem" }}>
+        <div ref={dayTabsRef} style={{ display: "flex", gap: "0.75rem", overflowX: "auto", padding: "0.1rem 0 1rem", marginBottom: "1rem" }}>
           {dayTabs.map(({ day, index }) => {
             const selected = index === selectedDayIndex;
 
