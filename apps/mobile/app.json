@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kjørebok",
     "slug": "kjorebok",
-    "version": "1.0.0",
+    "version": "1.0.32",
     "orientation": "portrait",
     "scheme": "kjorebok",
     "userInterfaceStyle": "automatic",

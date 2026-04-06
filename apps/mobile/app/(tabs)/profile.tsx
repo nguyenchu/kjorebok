@@ -1,13 +1,18 @@
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useAuth } from "@/lib/auth";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
 
 export default function ProfileScreen() {
+  const tabBarHeight = useBottomTabBarHeight();
   const { user, logout } = useAuth();
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 24 }]}
+    >
       <View style={styles.avatarContainer}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>

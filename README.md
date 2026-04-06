@@ -4,7 +4,17 @@
 
 Bruk Node 22 lokalt for dette repoet.
 
+Start med å aktivere riktig Node-versjon:
+
 ```bash
+nvm use
+```
+
+Hvis du får `zsh: command not found: nvm`, installer `nvm`, last shell-oppsettet på nytt og prøv igjen:
+
+```bash
+source ~/.zprofile
+nvm install
 nvm use
 ```
 
@@ -45,6 +55,8 @@ EXPO_PUBLIC_API_URL=http://10.0.2.2:3020
 ```
 
 ## Anbefalt oppstart
+
+Etter at `nvm use` er kjørt:
 
 ```bash
 corepack pnpm dev:local

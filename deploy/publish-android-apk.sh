@@ -33,9 +33,8 @@ parts = base_version.split(".")
 if len(parts) != 3:
     raise SystemExit(f"Expected expo.version in app.json to use semver, got {base_version!r}")
 
-major, minor, _patch = parts
 version_code = os.environ.get("ANDROID_VERSION_CODE") or str(int(time.time()))
-app_version = os.environ.get("APP_VERSION") or f"{major}.{minor}.{version_code}"
+app_version = os.environ.get("APP_VERSION") or base_version
 
 print(app_version, version_code)
 PY
