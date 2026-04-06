@@ -14,10 +14,13 @@ export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 
 const START_SPEED_MS = 5 / 3.6;
 const STOP_SPEED_MS = 2 / 3.6;
-const START_CONFIRM_POINTS = 3;
+const START_CONFIRM_POINTS = 2;
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 25;
 const MAX_PENDING_POINTS = 500;
+const MAX_START_ACCURACY_METERS = 80;
+const MIN_MOVEMENT_DISTANCE_METERS = 35;
+const MAX_SAMPLE_AGE_MS = 2 * 60 * 1000;
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 
@@ -27,6 +30,8 @@ const FAST_COUNT_KEY = "tracker_fast_count";
 const STOP_TIME_KEY = "tracker_stop_time";
 const PENDING_POINTS_KEY = "tracker_pending_points";
 const LAST_POINT_KEY = "tracker_last_point";
+const LAST_SAMPLE_KEY = "tracker_last_sample";
+const LAST_TASK_AT_KEY = "tracker_last_task_at";
 const LAST_SYNC_AT_KEY = "tracker_last_sync_at";
 const LOG_ENTRIES_KEY = "tracker_log_entries";
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
@@ -46,9 +51,11 @@ export interface TrackerDiagnostics {
   pendingPoints: number;
   trackingEnabled: boolean;
   hasToken: boolean;
+  locationServicesEnabled: boolean;
   foregroundPermission: Location.PermissionStatus;
   backgroundPermission: Location.PermissionStatus;
   lastPointTimestamp: string | null;
+  lastTaskAt: string | null;
   lastSyncAt: string | null;
   recentEvents: TrackerLogEntry[];
 }
@@ -94,6 +101,10 @@ async function markSyncSuccess(timestamp = new Date().toISOString()): Promise<vo
   await set(LAST_SYNC_AT_KEY, timestamp);
 }
 
+async function markTaskHeartbeat(timestamp = new Date().toISOString()): Promise<void> {
+  await set(LAST_TASK_AT_KEY, timestamp);
+}
+
 async function getPendingPoints(): Promise<GpsPoint[]> {
   const raw = await get(PENDING_POINTS_KEY);
   if (!raw) return [];
@@ -130,6 +141,64 @@ async function getLastPoint(): Promise<GpsPoint | null> {
 
 async function setLastPoint(point: GpsPoint): Promise<void> {
   await set(LAST_POINT_KEY, JSON.stringify(point));
+}
+
+async function getLastSample(): Promise<GpsPoint | null> {
+  const raw = await get(LAST_SAMPLE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as GpsPoint;
+    if (
+      typeof parsed?.lat === "number" &&
+      typeof parsed?.lng === "number" &&
+      typeof parsed?.timestamp === "string"
+    ) {
+      return parsed;
+    }
+  } catch {}
+
+  return null;
+}
+
+async function setLastSample(point: GpsPoint): Promise<void> {
+  await set(LAST_SAMPLE_KEY, JSON.stringify(point));
+}
+
+function haversineMeters(a: GpsPoint, b: GpsPoint): number {
+  const R = 6371000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) *
+      Math.cos((b.lat * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function isUsableAccuracy(point: GpsPoint): boolean {
+  return point.accuracy > 0 && point.accuracy <= MAX_START_ACCURACY_METERS;
+}
+
+async function detectMovement(point: GpsPoint): Promise<boolean> {
+  if (point.speed > START_SPEED_MS) {
+    return true;
+  }
+
+  const previous = await getLastSample();
+  if (!previous) return false;
+
+  const age = Math.abs(new Date(point.timestamp).getTime() - new Date(previous.timestamp).getTime());
+  if (age > MAX_SAMPLE_AGE_MS) return false;
+  if (!isUsableAccuracy(point) || !isUsableAccuracy(previous)) return false;
+
+  return haversineMeters(previous, point) >= MIN_MOVEMENT_DISTANCE_METERS;
+}
+
+async function storeLocationSample(point: GpsPoint): Promise<void> {
+  await setLastSample(point);
+  await markTaskHeartbeat(point.timestamp);
 }
 
 async function enqueuePoint(point: GpsPoint): Promise<void> {
@@ -244,6 +313,7 @@ async function resetActiveTripState(): Promise<void> {
   await clear(ACTIVE_TRIP_KEY);
   await clear(STOP_TIME_KEY);
   await clear(LAST_POINT_KEY);
+  await clear(LAST_SAMPLE_KEY);
   await set(STATE_KEY, "IDLE");
 }
 
@@ -293,12 +363,16 @@ async function closeStaleTrip(referenceTimestamp: number): Promise<boolean> {
 async function handleLocation(loc: Location.LocationObject): Promise<void> {
   const point = toGpsPoint(loc);
   const speed = point.speed;
+  const moving = await detectMovement(point);
+  const hasGoodAccuracy = isUsableAccuracy(point);
+
+  await storeLocationSample(point);
   await closeStaleTrip(loc.timestamp);
   const state = ((await get(STATE_KEY)) ?? "IDLE") as TrackerState;
 
   switch (state) {
     case "IDLE": {
-      if (speed > START_SPEED_MS) {
+      if (moving && hasGoodAccuracy) {
         await set(STATE_KEY, "DETECTING_START");
         await set(FAST_COUNT_KEY, "1");
         await appendLog("Oppdaget bevegelse som kan starte tur.");
@@ -307,7 +381,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
     }
 
     case "DETECTING_START": {
-      if (speed > START_SPEED_MS) {
+      if (moving && hasGoodAccuracy) {
         const count = Number((await get(FAST_COUNT_KEY)) ?? "0") + 1;
         if (count >= START_CONFIRM_POINTS) {
           await startTrip(point);
@@ -337,7 +411,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
         );
       });
 
-      if (speed < STOP_SPEED_MS) {
+      if (speed < STOP_SPEED_MS && hasGoodAccuracy) {
         await set(STATE_KEY, "DETECTING_STOP");
         await set(STOP_TIME_KEY, String(loc.timestamp));
         await appendLog("Mulig turstopp oppdaget.");
@@ -354,7 +428,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
       await enqueuePoint(point);
 
-      if (speed > START_SPEED_MS) {
+      if (moving && hasGoodAccuracy) {
         await set(STATE_KEY, "RECORDING");
         await clear(STOP_TIME_KEY);
         await flushPendingPoints(tripId).catch(async (error) => {
@@ -385,6 +459,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 
   const { locations } = data as { locations: Location.LocationObject[] };
   try {
+    await markTaskHeartbeat();
     for (const loc of locations) {
       await handleLocation(loc);
     }
@@ -416,6 +491,8 @@ export async function requestPermissions(): Promise<boolean> {
 
   if (bg.status !== "granted") {
     await appendLog("Mangler bakgrunnslokasjon.", "warn");
+  } else {
+    await appendLog("Bakgrunnslokasjon er klar.");
   }
 
   return bg.status === "granted";
@@ -425,16 +502,21 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
   const granted = await requestPermissions();
   if (!granted) return false;
 
+  const providerStatus = await Location.getProviderStatusAsync().catch(() => null);
+  if (providerStatus && !providerStatus.locationServicesEnabled) {
+    await appendLog("Posisjonstjenester er av på telefonen.", "warn");
+  }
+
   const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
   if (!isRunning) {
     await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
       accuracy: Location.Accuracy.High,
-      timeInterval: 5000,
+      timeInterval: 3000,
       distanceInterval: 10,
       showsBackgroundLocationIndicator: true,
       foregroundService: {
         notificationTitle: "Kjørebok",
-        notificationBody: "Sporing er alltid aktiv for å fange opp turer automatisk.",
+        notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
       },
     });
     await appendLog("Bakgrunnssporing ble startet.");
@@ -488,12 +570,13 @@ export async function stopTracking(): Promise<void> {
   await clear(STOP_TIME_KEY);
   await clear(PENDING_POINTS_KEY);
   await clear(LAST_POINT_KEY);
+  await clear(LAST_SAMPLE_KEY);
   await appendLog("Bakgrunnssporing ble stoppet.", "warn");
 }
 
 export async function getTrackerState(): Promise<TrackerDiagnostics> {
   const trackingEnabled = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  const [foregroundPermission, backgroundPermission, lastPoint, lastSyncAt, token, recentEvents] =
+  const [foregroundPermission, backgroundPermission, providerStatus, lastPoint, lastTaskAt, lastSyncAt, token, recentEvents] =
     await Promise.all([
       Location.getForegroundPermissionsAsync()
         .then((result) => result.status)
@@ -501,7 +584,9 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
       Location.getBackgroundPermissionsAsync()
         .then((result) => result.status)
         .catch(() => "undetermined" as Location.PermissionStatus),
+      Location.getProviderStatusAsync().catch(() => null),
       getLastPoint(),
+      get(LAST_TASK_AT_KEY),
       get(LAST_SYNC_AT_KEY),
       getToken(),
       getRecentEvents(),
@@ -513,9 +598,11 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     pendingPoints: (await getPendingPoints()).length,
     trackingEnabled,
     hasToken: Boolean(token),
+    locationServicesEnabled: providerStatus?.locationServicesEnabled ?? false,
     foregroundPermission,
     backgroundPermission,
     lastPointTimestamp: lastPoint?.timestamp ?? null,
+    lastTaskAt,
     lastSyncAt,
     recentEvents,
   };

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { View, Text, FlatList, StyleSheet, RefreshControl } from "react-native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { api } from "@/lib/api";
 import type { TripSummary } from "@kjorebok/shared";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
@@ -71,6 +72,7 @@ function TripTimelineItem({ trip, isLast }: { trip: TripSummary; isLast: boolean
 }
 
 export default function TripsScreen() {
+  const tabBarHeight = useBottomTabBarHeight();
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,7 +102,7 @@ export default function TripsScreen() {
       data={grouped}
       keyExtractor={(group) => group.day}
       style={styles.container}
-      contentContainerStyle={styles.list}
+      contentContainerStyle={[styles.list, { paddingBottom: tabBarHeight + 24 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListEmptyComponent={
         <View style={styles.emptyContainer}>

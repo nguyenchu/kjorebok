@@ -1,57 +1,72 @@
-import { useEffect, useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView } from "react-native";
-import { ensureTrackingConfigured, getTrackerState } from "@/lib/tripTracker";
+import { useEffect, useMemo, useState } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, Linking } from "react-native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { router } from "expo-router";
+import { ensureTrackingConfigured, getTrackerState, syncActiveTrip } from "@/lib/tripTracker";
+import { formatDistanceToNowStrict } from "date-fns";
+import { nb } from "date-fns/locale";
 
-type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
+function formatRelativeTime(timestamp: string | null): string {
+  if (!timestamp) return "Ikke registrert ennå";
 
-const stateConfig: Record<TrackerState, { label: string; subtitle: string; color: string; pulse: boolean }> = {
-  IDLE: {
-    label: "Venter",
-    subtitle: "Kjør for å starte en tur automatisk",
-    color: "#94a3b8",
-    pulse: false,
-  },
-  DETECTING_START: {
-    label: "Oppdager bevegelse",
-    subtitle: "Verifiserer at du er i fart...",
-    color: "#f59e0b",
-    pulse: true,
-  },
-  RECORDING: {
-    label: "Registrerer tur",
-    subtitle: "GPS-posisjoner blir lagret",
-    color: "#22c55e",
-    pulse: true,
-  },
-  DETECTING_STOP: {
-    label: "Bremser ned",
-    subtitle: "Sjekker om turen er over...",
-    color: "#f59e0b",
-    pulse: true,
-  },
-};
+  try {
+    return `${formatDistanceToNowStrict(new Date(timestamp), {
+      addSuffix: true,
+      locale: nb,
+    })}`;
+  } catch {
+    return timestamp;
+  }
+}
+
+function isOlderThan(timestamp: string | null, ms: number): boolean {
+  if (!timestamp) return true;
+
+  const time = new Date(timestamp).getTime();
+  if (!Number.isFinite(time)) return true;
+  return Date.now() - time > ms;
+}
 
 export default function TrackingScreen() {
+  const tabBarHeight = useBottomTabBarHeight();
   const [tracking, setTracking] = useState(false);
-  const [state, setState] = useState<TrackerState>("IDLE");
+  const [state, setState] = useState("IDLE");
+  const [activeTripId, setActiveTripId] = useState<string | null>(null);
   const [pendingPoints, setPendingPoints] = useState(0);
+  const [hasToken, setHasToken] = useState(false);
+  const [locationServicesEnabled, setLocationServicesEnabled] = useState(false);
   const [foregroundPermission, setForegroundPermission] = useState("undetermined");
   const [backgroundPermission, setBackgroundPermission] = useState("undetermined");
+  const [lastPointTimestamp, setLastPointTimestamp] = useState<string | null>(null);
+  const [lastTaskAt, setLastTaskAt] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [recentEvents, setRecentEvents] = useState<
+    Array<{ timestamp: string; level: "info" | "warn" | "error"; message: string }>
+  >([]);
+  const [showDetails, setShowDetails] = useState(false);
 
   const refresh = async () => {
     const tracker = await getTrackerState();
     setTracking(tracker.trackingEnabled);
     setState(tracker.state);
+    setActiveTripId(tracker.activeTripId);
     setPendingPoints(tracker.pendingPoints);
+    setHasToken(tracker.hasToken);
+    setLocationServicesEnabled(tracker.locationServicesEnabled);
     setForegroundPermission(tracker.foregroundPermission);
     setBackgroundPermission(tracker.backgroundPermission);
+    setLastPointTimestamp(tracker.lastPointTimestamp);
+    setLastTaskAt(tracker.lastTaskAt);
+    setLastSyncAt(tracker.lastSyncAt);
+    setRecentEvents(tracker.recentEvents);
   };
 
   useEffect(() => {
     refresh().catch(() => {});
     const interval = setInterval(() => {
       refresh().catch(() => {});
-    }, 5000);
+    }, 15000);
+
     return () => clearInterval(interval);
   }, []);
 
@@ -60,130 +75,285 @@ export default function TrackingScreen() {
       const enabled = await ensureTrackingConfigured();
       await refresh();
       if (!enabled) {
-        Alert.alert(
-          "Tillatelser mangler",
-          "Gi appen tilgang til bakgrunnslokasjon for at telefonen skal kunne registrere turer automatisk."
-        );
+        Alert.alert("Tillatelser mangler", "Gi appen tilgang til bakgrunnslokasjon for at telefonen skal kunne registrere turer automatisk.");
       }
     } catch (error: any) {
       Alert.alert("Feil", error?.message ?? "Kunne ikke aktivere sporing.");
     }
   };
 
-  const needsSetup = !tracking || foregroundPermission !== "granted" || backgroundPermission !== "granted";
-  const config = stateConfig[state] ?? stateConfig.IDLE;
+  const handleSync = async () => {
+    try {
+      await syncActiveTrip();
+      await refresh();
+    } catch (error: any) {
+      Alert.alert("Sync feilet", error?.message ?? "Kunne ikke synkronisere turen.");
+    }
+  };
+
+  const needsPermission = foregroundPermission !== "granted" || backgroundPermission !== "granted";
+  const taskSeemsStale = tracking && isOlderThan(lastTaskAt, 20 * 60 * 1000);
+  const needsAttention = !hasToken || !locationServicesEnabled || needsPermission || !tracking || taskSeemsStale;
+  const headline = useMemo(() => {
+    if (!hasToken) return "Du er ikke innlogget";
+    if (!locationServicesEnabled) return "Skru på posisjonstjenester";
+    if (needsPermission) return "Gi appen bakgrunnslokasjon";
+    if (!tracking) return "Aktiver bakgrunnssporing";
+    if (taskSeemsStale) return "Venter på ny bakgrunnsoppdatering";
+    if (state === "RECORDING") return "Tur registreres nå";
+    if (pendingPoints > 0) return "Turdata venter på synk";
+    if (activeTripId) return "Aktiv tur venter på flere punkter";
+    return "Tracking er klar";
+  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, state, taskSeemsStale, tracking]);
+
+  const summary = useMemo(() => {
+    if (!hasToken) return "Logg inn igjen hvis sesjonen har utløpt. Appen kan ikke sende turdata uten gyldig sesjon.";
+    if (!locationServicesEnabled) return "Telefonens posisjonstjenester er av, så Android kan ikke levere bakgrunnsposisjon til appen.";
+    if (needsPermission) return "Appen trenger både forgrunns- og bakgrunnslokasjon for å oppdage turstart og turstopp.";
+    if (!tracking) return "Bakgrunnsoppgaven kjører ikke ennå. Start den én gang, så holder appen seg klar i bakgrunnen.";
+    if (taskSeemsStale) return "Appen er satt opp for bakgrunnssporing, men Android har ikke levert noen fersk bakgrunnsoppgave nylig. Sjekk at batterisparing ikke holder appen igjen.";
+    if (pendingPoints > 0) return "Det ligger ventende punkter lokalt. De blir sendt automatisk når nett og sesjon er klare.";
+    return "Appen følger med i bakgrunnen og skal starte tur automatisk når den ser stabil bevegelse.";
+  }, [hasToken, locationServicesEnabled, needsPermission, pendingPoints, taskSeemsStale, tracking]);
+
+  const detailHint = useMemo(() => {
+    if (pendingPoints > 0) return `${pendingPoints} punkt venter på synkronisering.`;
+    if (activeTripId) return "En tur er aktiv akkurat nå.";
+    if (needsAttention) return "Trykk under for flere detaljer hvis noe ikke virker.";
+    return "Alt ser klart ut akkurat nå.";
+  }, [activeTripId, needsAttention, pendingPoints]);
+
+  const primaryAction = useMemo(() => {
+    if (!hasToken) {
+      return {
+        label: "Gå til innlogging",
+        onPress: () => {
+          router.replace("/login");
+        },
+      };
+    }
+
+    if (!locationServicesEnabled || needsPermission) {
+      return {
+        label: "Åpne innstillinger",
+        onPress: async () => {
+          await Linking.openSettings();
+        },
+      };
+    }
+
+    if (!tracking) {
+      return {
+        label: "Aktiver sporing",
+        onPress: handleEnable,
+      };
+    }
+
+    if (pendingPoints > 0 || activeTripId) {
+      return {
+        label: "Send ventende data",
+        onPress: handleSync,
+      };
+    }
+
+    return {
+      label: "Oppdater status",
+      onPress: refresh,
+    };
+  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, tracking]);
+
+  const stateLabel: Record<string, string> = {
+    IDLE: "Telefonen venter på bevegelse",
+    DETECTING_START: "Telefonen oppdager mulig tur",
+    RECORDING: "Telefonen registrerer tur",
+    DETECTING_STOP: "Telefonen vurderer om turen er ferdig",
+  };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.hero}>
-        <View style={[styles.statusRing, { borderColor: config.color }]}>
-          <View style={[styles.statusDot, { backgroundColor: config.color }]} />
-        </View>
-        <Text style={styles.stateLabel}>{config.label}</Text>
-        <Text style={styles.stateSubtitle}>{config.subtitle}</Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 24 }]}
+    >
+      <View style={styles.stateCard}>
+        <Text style={styles.stateLabel}>{headline}</Text>
+        <Text style={styles.statusMeta}>{summary}</Text>
+        <Text style={styles.stateSubLabel}>{stateLabel[state] ?? state}</Text>
+        <View
+          style={[
+            styles.dot,
+            needsAttention
+              ? { backgroundColor: "#ef4444" }
+              : tracking
+                ? { backgroundColor: state === "RECORDING" ? "#22c55e" : "#f59e0b" }
+                : undefined,
+          ]}
+        />
       </View>
 
-      {pendingPoints > 0 && (
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>{pendingPoints} punkt venter på synkronisering</Text>
-        </View>
-      )}
+      <View style={styles.helperCard}>
+        <Text style={styles.helperText}>{detailHint}</Text>
+      </View>
 
-      {needsSetup && (
-        <TouchableOpacity style={styles.button} onPress={handleEnable} activeOpacity={0.8}>
-          <Text style={styles.buttonText}>Aktiver sporing</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity style={[styles.button, needsAttention && styles.warningButton]} onPress={primaryAction.onPress} activeOpacity={0.85}>
+        <Text style={styles.buttonText}>{primaryAction.label}</Text>
+      </TouchableOpacity>
 
-      {!needsSetup && (
-        <View style={styles.statusBanner}>
-          <View style={styles.bannerDot} />
-          <Text style={styles.bannerText}>Automatisk sporing er aktiv</Text>
-        </View>
-      )}
+      <TouchableOpacity style={styles.secondaryButton} onPress={() => setShowDetails((value) => !value)} activeOpacity={0.85}>
+        <Text style={styles.secondaryButtonText}>{showDetails ? "Skjul detaljer" : "Vis detaljer"}</Text>
+      </TouchableOpacity>
 
-      <Text style={styles.helperText}>
-        Appen registrerer turer automatisk i bakgrunnen når du kjører. Du trenger ikke gjøre noe.
-      </Text>
+      {showDetails && (
+        <>
+          <View style={styles.metaCard}>
+            <Text style={styles.sectionTitle}>Detaljer</Text>
+            {activeTripId && <Text style={styles.metaRow}>Aktiv tur: {activeTripId.slice(0, 8)}...</Text>}
+            <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
+            <Text style={styles.metaRow}>Innlogget sesjon: {hasToken ? "Ja" : "Nei"}</Text>
+            <Text style={styles.metaRow}>Posisjonstjenester: {locationServicesEnabled ? "På" : "Av"}</Text>
+            <Text style={styles.metaRow}>Forgrunnslokasjon: {foregroundPermission}</Text>
+            <Text style={styles.metaRow}>Bakgrunnslokasjon: {backgroundPermission}</Text>
+            <Text style={styles.metaRow}>Sist bakgrunnsoppgave kjørte: {formatRelativeTime(lastTaskAt)}</Text>
+            <Text style={styles.metaRow}>Siste GPS-punkt: {formatRelativeTime(lastPointTimestamp)}</Text>
+            <Text style={styles.metaRow}>Siste vellykkede sync: {formatRelativeTime(lastSyncAt)}</Text>
+          </View>
+
+          <View style={styles.logCard}>
+            <Text style={styles.sectionTitle}>Siste hendelser</Text>
+            {recentEvents.length === 0 ? (
+              <Text style={styles.logEmpty}>Ingen hendelser registrert ennå.</Text>
+            ) : (
+              recentEvents.map((event, index) => (
+                <View key={`${event.timestamp}-${index}`} style={styles.logEntry}>
+                  <Text
+                    style={[
+                      styles.logLevel,
+                      event.level === "error" && styles.logLevelError,
+                      event.level === "warn" && styles.logLevelWarn,
+                    ]}
+                  >
+                    {event.level.toUpperCase()}
+                  </Text>
+                  <Text style={styles.logMessage}>{event.message}</Text>
+                  <Text style={styles.logTime}>{formatRelativeTime(event.timestamp)}</Text>
+                </View>
+              ))
+            )}
+          </View>
+        </>
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
-  content: { flexGrow: 1, padding: 24, justifyContent: "center", alignItems: "center" },
-  hero: { alignItems: "center", marginBottom: 40 },
-  statusRing: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 4,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 24,
-  },
-  statusDot: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  stateLabel: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 6,
-  },
-  stateSubtitle: {
-    fontSize: 15,
-    color: "#64748b",
-    textAlign: "center",
-    lineHeight: 22,
-  },
-  infoRow: {
+  content: { padding: 20, paddingBottom: 32 },
+  stateCard: {
     backgroundColor: "#fff",
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    marginBottom: 20,
+    padding: 24,
+    alignItems: "center",
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  infoLabel: {
+  stateLabel: { fontSize: 18, fontWeight: "600", marginBottom: 8, textAlign: "center" },
+  statusMeta: { fontSize: 13, color: "#64748b", marginBottom: 8, textAlign: "center", lineHeight: 19 },
+  stateSubLabel: { fontSize: 13, color: "#334155", marginBottom: 8, textAlign: "center", fontWeight: "600" },
+  dot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#cbd5e1",
+  },
+  metaCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  helperCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+    marginBottom: 10,
+  },
+  helperText: {
+    color: "#475569",
     fontSize: 14,
-    color: "#64748b",
+    lineHeight: 20,
+  },
+  metaRow: {
+    color: "#334155",
+    fontSize: 14,
+    marginBottom: 8,
   },
   button: {
     backgroundColor: "#2563eb",
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    marginBottom: 20,
-  },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  statusBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#f0fdf4",
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    marginBottom: 20,
+    padding: 18,
+    alignItems: "center",
+    marginBottom: 12,
   },
-  bannerDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#22c55e",
+  warningButton: { backgroundColor: "#0f172a" },
+  buttonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  secondaryButton: {
+    alignItems: "center",
+    paddingVertical: 10,
+    marginBottom: 16,
   },
-  bannerText: {
-    fontSize: 14,
+  secondaryButtonText: {
+    color: "#2563eb",
+    fontSize: 15,
     fontWeight: "600",
-    color: "#166534",
   },
-  helperText: {
-    color: "#94a3b8",
-    fontSize: 13,
-    textAlign: "center",
-    lineHeight: 20,
-    maxWidth: 280,
+  logCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  logEmpty: { color: "#64748b", fontSize: 14 },
+  logEntry: {
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#e2e8f0",
+  },
+  logLevel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#2563eb",
+    marginBottom: 4,
+  },
+  logLevelWarn: {
+    color: "#b45309",
+  },
+  logLevelError: {
+    color: "#dc2626",
+  },
+  logMessage: {
+    fontSize: 14,
+    color: "#0f172a",
+    marginBottom: 4,
+  },
+  logTime: {
+    fontSize: 12,
+    color: "#64748b",
   },
 });

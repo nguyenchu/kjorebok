@@ -140,9 +140,8 @@ jobs:
             throw new Error(`Expected expo.version to be semver, got: ${configuredVersion}`);
           }
 
-          const [, major, minor] = match;
           const versionCode = process.env.GITHUB_RUN_NUMBER;
-          const appVersion = `${major}.${minor}.${versionCode}`;
+          const appVersion = configuredVersion;
 
           fs.writeFileSync(
             process.env.GITHUB_ENV,

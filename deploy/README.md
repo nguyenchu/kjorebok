@@ -142,6 +142,6 @@ Required GitHub Actions secrets:
 
 Default versioning behavior:
 
-- keep `apps/mobile/app.json` at the desired `major.minor.0` base, for example `1.0.0`
-- the workflow turns that into `major.minor.<github-run-number>`
-- `android.versionCode` is set to the same GitHub run number
+- set `apps/mobile/app.json` to the exact user-facing app version you want to publish, for example `1.0.32` or `1.1.0`
+- the workflow publishes that exact version string as Android `versionName`
+- `android.versionCode` is set from the GitHub run number so Android still gets a monotonically increasing build number
