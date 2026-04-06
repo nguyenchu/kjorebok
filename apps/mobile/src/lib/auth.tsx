@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { api, setToken, clearToken, setUnauthorizedHandler } from "./api";
+import { api, setToken, clearToken } from "./api";
 import { stopTracking } from "./tripTracker";
 import type { User, LoginDto, RegisterDto } from "@kjorebok/shared";
 
@@ -49,11 +49,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState({ user, loading: false });
       })
       .catch(() => setState({ user: null, loading: false }));
-  }, []);
-
-  useEffect(() => {
-    setUnauthorizedHandler(() => clearSession());
-    return () => setUnauthorizedHandler(null);
   }, []);
 
   const login = async (dto: LoginDto) => {
