@@ -1,4 +1,5 @@
 export type TripStatus = "ACTIVE" | "COMPLETED";
+export type TripPurpose = "PRIVATE" | "WORK";
 
 export interface GpsPoint {
   lat: number;
@@ -18,6 +19,7 @@ export interface Trip {
   distanceMeters: number;
   startAddress: string | null;
   endAddress: string | null;
+  purpose: TripPurpose;
   route: GpsPoint[];
   createdAt: string;
   updatedAt: string;
@@ -42,3 +44,7 @@ export interface CompleteTripDto {
 }
 
 export type TripSummary = Omit<Trip, "route">;
+
+export interface UpdateTripDto {
+  purpose?: TripPurpose;
+}

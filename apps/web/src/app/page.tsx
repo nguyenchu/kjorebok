@@ -1,9 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { TripSummary } from "@kjorebok/shared";
+import type { TripPurpose, TripSummary, Trip } from "@kjorebok/shared";
+
+const TripMap = dynamic(() => import("./TripMap"), { ssr: false });
 import { addDays, differenceInCalendarDays, format, isToday, isYesterday, parseISO, startOfDay } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -95,6 +98,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [mapTrip, setMapTrip] = useState<Trip | null>(null);
+  const [mapLoading, setMapLoading] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -105,6 +111,41 @@ export default function DashboardPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [user, authLoading, router]);
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Slett turen?")) return;
+    setDeletingId(id);
+    try {
+      await api.delete(`/trips/${id}`);
+      setTrips((prev) => prev.filter((t) => t.id !== id));
+    } catch (e: any) {
+      alert(e.message ?? "Kunne ikke slette turen.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handlePurpose = async (id: string, purpose: TripPurpose) => {
+    try {
+      await api.patch(`/trips/${id}`, { purpose });
+      setTrips((prev) => prev.map((t) => t.id === id ? { ...t, purpose } : t));
+    } catch (e: any) {
+      alert(e.message ?? "Kunne ikke oppdatere formål.");
+    }
+  };
+
+  const handleOpenMap = async (id: string) => {
+    setMapLoading(true);
+    setMapTrip(null);
+    try {
+      const trip = await api.get<Trip>(`/trips/${id}`);
+      setMapTrip(trip);
+    } catch (e: any) {
+      alert(e.message ?? "Kunne ikke laste tur.");
+    } finally {
+      setMapLoading(false);
+    }
+  };
 
   const dayLog = buildDayLog(trips);
 
@@ -286,9 +327,34 @@ export default function DashboardPage() {
           </p>
           <h2 style={{ fontSize: "1.45rem", fontWeight: 800, letterSpacing: "-0.03em" }}>Turlogg</h2>
         </div>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-          {trips.length} {trips.length === 1 ? "tur" : "turer"} vist
-        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+            {trips.length} {trips.length === 1 ? "tur" : "turer"} vist
+          </p>
+          <button
+            onClick={async () => {
+              const blob = await api.getBlob("/trips/export.csv");
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "kjorebok.csv";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            style={{
+              padding: "0.45rem 0.9rem",
+              background: "rgba(255,255,255,0.86)",
+              border: "1px solid var(--border)",
+              borderRadius: "999px",
+              fontSize: "0.85rem",
+              fontWeight: 600,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            Eksporter CSV
+          </button>
+        </div>
       </div>
 
       {dayLog.length > 0 && (
@@ -397,12 +463,33 @@ export default function DashboardPage() {
                       <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.3rem" }}>
                         {trip.startAddress ?? "Ukjent start"} → {trip.endAddress ?? "Ukjent slutt"}
                       </div>
-                      <div style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                      <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>
                         {format(new Date(trip.startedAt), "HH:mm", { locale: nb })} ·{" "}
                         {formatDuration(trip.startedAt, trip.endedAt)}
                       </div>
+                      <div style={{ display: "flex", gap: "0.35rem" }}>
+                        {(["PRIVATE", "WORK"] as TripPurpose[]).map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => handlePurpose(trip.id, p)}
+                            style={{
+                              padding: "0.2rem 0.55rem",
+                              borderRadius: "999px",
+                              border: "1px solid",
+                              cursor: "pointer",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              background: trip.purpose === p ? "var(--text)" : "transparent",
+                              color: trip.purpose === p ? "#f8fafc" : "var(--text-soft)",
+                              borderColor: trip.purpose === p ? "var(--text)" : "var(--border)",
+                            }}
+                          >
+                            {p === "PRIVATE" ? "Privat" : "Jobb"}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.4rem" }}>
                       <div style={{ fontWeight: 800, fontSize: "1.25rem", letterSpacing: "-0.03em" }}>
                         {formatDistance(trip.distanceMeters)}
                       </div>
@@ -411,7 +498,6 @@ export default function DashboardPage() {
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          marginTop: "0.4rem",
                           padding: "0.28rem 0.6rem",
                           borderRadius: "999px",
                           background: trip.status === "ACTIVE" ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.14)",
@@ -424,12 +510,95 @@ export default function DashboardPage() {
                       >
                         {trip.status === "ACTIVE" ? "Aktiv" : "Fullført"}
                       </div>
+                      <button
+                        onClick={() => handleOpenMap(trip.id)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "var(--text-muted)",
+                          fontSize: "0.8rem",
+                          padding: "0.2rem 0.4rem",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        Kart
+                      </button>
+                      <button
+                        onClick={() => handleDelete(trip.id)}
+                        disabled={deletingId === trip.id}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: deletingId === trip.id ? "default" : "pointer",
+                          color: "var(--text-muted)",
+                          fontSize: "0.8rem",
+                          padding: "0.2rem 0.4rem",
+                          borderRadius: "6px",
+                          opacity: deletingId === trip.id ? 0.4 : 1,
+                        }}
+                      >
+                        Slett
+                      </button>
                     </div>
                   </div>
               ))}
             </div>
           )}
         </section>
+      )}
+      {(mapTrip || mapLoading) && (
+        <div
+          onClick={() => setMapTrip(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 100,
+            background: "rgba(15,23,42,0.6)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "1rem",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              borderRadius: "24px",
+              width: "100%",
+              maxWidth: "800px",
+              height: "520px",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 40px 80px rgba(15,23,42,0.24)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem", borderBottom: "1px solid var(--border)" }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: "1rem" }}>
+                  {mapTrip ? `${mapTrip.startAddress ?? "Ukjent start"} → ${mapTrip.endAddress ?? "Ukjent slutt"}` : "Laster kart…"}
+                </div>
+                {mapTrip && (
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                    {(mapTrip.distanceMeters / 1000).toFixed(1)} km · {mapTrip.route.length} GPS-punkter
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setMapTrip(null)}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1.4rem", color: "var(--text-muted)", lineHeight: 1 }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ flex: 1 }}>
+              {mapLoading && (
+                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                  Laster…
+                </div>
+              )}
+              {mapTrip && <TripMap route={mapTrip.route} />}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
