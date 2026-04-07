@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity } from "react-native";
+import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { router } from "expo-router";
 import { api } from "@/lib/api";
-import type { TripSummary } from "@kjorebok/shared";
+import type { TripPurpose, TripSummary } from "@kjorebok/shared";
 import { addDays, differenceInCalendarDays, format, isToday, isYesterday, parseISO, startOfDay } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -74,9 +75,19 @@ function groupTripsByDay(trips: TripSummary[]): DayGroup[] {
   });
 }
 
-function TripTimelineItem({ trip, isLast }: { trip: TripSummary; isLast: boolean }) {
+function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onPress }: { trip: TripSummary; isLast: boolean; onDelete: (id: string) => void; onSetPurpose: (id: string, purpose: TripPurpose) => void; onPress: (id: string) => void }) {
   const isActive = trip.status === "ACTIVE";
   const time = format(parseISO(trip.startedAt), "HH:mm", { locale: nb });
+
+  const handleLongPress = () => {
+    const nextPurpose: TripPurpose = trip.purpose === "PRIVATE" ? "WORK" : "PRIVATE";
+    const nextLabel = nextPurpose === "WORK" ? "Jobb" : "Privat";
+    Alert.alert(trip.purpose === "PRIVATE" ? "Privat tur" : "Jobbreise", undefined, [
+      { text: `Merk som ${nextLabel}`, onPress: () => onSetPurpose(trip.id, nextPurpose) },
+      { text: "Slett tur", style: "destructive", onPress: () => onDelete(trip.id) },
+      { text: "Avbryt", style: "cancel" },
+    ]);
+  };
 
   return (
     <View style={styles.timelineItem}>
@@ -87,7 +98,7 @@ function TripTimelineItem({ trip, isLast }: { trip: TripSummary; isLast: boolean
         <View style={[styles.timelineDot, isActive && styles.timelineDotActive]} />
         {!isLast && <View style={styles.timelineLine} />}
       </View>
-      <View style={styles.timelineCard}>
+      <TouchableOpacity style={styles.timelineCard} onPress={() => onPress(trip.id)} onLongPress={handleLongPress} activeOpacity={0.85}>
         <View style={styles.cardHeader}>
           <Text style={styles.distance}>{formatDistance(trip.distanceMeters)}</Text>
           {isActive && (
@@ -106,7 +117,7 @@ function TripTimelineItem({ trip, isLast }: { trip: TripSummary; isLast: boolean
             <Text style={styles.route} numberOfLines={2}>{trip.endAddress}</Text>
           </View>
         )}
-      </View>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -129,6 +140,24 @@ export default function TripsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+
+  const handleDelete = useCallback(async (id: string) => {
+    try {
+      await api.delete(`/trips/${id}`);
+      setTrips((prev) => prev.filter((t) => t.id !== id));
+    } catch (e: any) {
+      Alert.alert("Feil", e.message ?? "Kunne ikke slette turen.");
+    }
+  }, []);
+
+  const handlePurpose = useCallback(async (id: string, purpose: TripPurpose) => {
+    try {
+      await api.patch(`/trips/${id}`, { purpose });
+      setTrips((prev) => prev.map((t) => t.id === id ? { ...t, purpose } : t));
+    } catch (e: any) {
+      Alert.alert("Feil", e.message ?? "Kunne ikke oppdatere formål.");
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -231,6 +260,9 @@ export default function TripsScreen() {
         <TripTimelineItem
           trip={trip}
           isLast={index === selectedTrips.length - 1}
+          onDelete={handleDelete}
+          onSetPurpose={handlePurpose}
+          onPress={(id) => router.push(`/trip/${id}`)}
         />
       )}
     />

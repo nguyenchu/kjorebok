@@ -18,20 +18,21 @@ model User {
 }
 
 model Trip {
-  id             String     @id @default(cuid())
+  id             String      @id @default(cuid())
   userId         String
-  status         TripStatus @default(ACTIVE)
+  status         TripStatus  @default(ACTIVE)
   startedAt      DateTime
   endedAt        DateTime?
-  distanceMeters Float      @default(0)
+  distanceMeters Float       @default(0)
   startAddress   String?
   endAddress     String?
+  purpose        TripPurpose @default(PRIVATE)
   // Route stored as JSON array of GpsPoint objects
   // For production, consider PostGIS geography(LineString) instead
-  route          Json       @default("[]")
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  route          Json        @default("[]")
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
@@ -40,4 +41,9 @@ model Trip {
 enum TripStatus {
   ACTIVE
   COMPLETED
+}
+
+enum TripPurpose {
+  PRIVATE
+  WORK
 }

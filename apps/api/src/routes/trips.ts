@@ -31,6 +31,10 @@ const endTripSchema = z.object({
   endAddress: z.string().trim().min(1).nullable().optional(),
 });
 
+const updateTripSchema = z.object({
+  purpose: z.enum(["PRIVATE", "WORK"]).optional(),
+});
+
 const STALE_ACTIVE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Haversine distance in meters between two lat/lng points */
@@ -125,6 +129,41 @@ async function finalizeStaleActiveTrips(userId: string): Promise<void> {
 export async function tripRoutes(app: FastifyInstance) {
   const auth = { onRequest: [(app as any).authenticate] };
 
+  // Export trips as CSV
+  app.get("/trips/export.csv", auth, async (request, reply) => {
+    const userId = (request.user as any).sub;
+    await finalizeStaleActiveTrips(userId);
+    const trips = await prisma.trip.findMany({
+      where: { userId, status: "COMPLETED" },
+      orderBy: { startedAt: "asc" },
+      select: {
+        startedAt: true, endedAt: true,
+        distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
+      },
+    });
+
+    const rows = [
+      ["Dato", "Starttid", "Sluttid", "Varighet (min)", "Distanse (km)", "Fra", "Til", "Formål"],
+      ...trips.map((t) => {
+        const start = new Date(t.startedAt);
+        const end = t.endedAt ? new Date(t.endedAt) : null;
+        const mins = end ? Math.round((end.getTime() - start.getTime()) / 60000) : "";
+        const date = start.toLocaleDateString("nb-NO");
+        const startTime = start.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+        const endTime = end ? end.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" }) : "";
+        const km = (t.distanceMeters / 1000).toFixed(2);
+        const purpose = t.purpose === "WORK" ? "Jobb" : "Privat";
+        return [date, startTime, endTime, mins, km, t.startAddress ?? "", t.endAddress ?? "", purpose];
+      }),
+    ];
+
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+
+    reply.header("Content-Type", "text/csv; charset=utf-8");
+    reply.header("Content-Disposition", "attachment; filename=\"kjorebok.csv\"");
+    return reply.send("\uFEFF" + csv); // BOM for Excel
+  });
+
   // List trips (summary, no route)
   app.get("/trips", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
@@ -136,7 +175,7 @@ export async function tripRoutes(app: FastifyInstance) {
         id: true, userId: true,
         status: true, startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true,
-        createdAt: true, updatedAt: true,
+        purpose: true, createdAt: true, updatedAt: true,
       },
     });
     return reply.send(trips);
@@ -245,6 +284,29 @@ export async function tripRoutes(app: FastifyInstance) {
         status: "COMPLETED",
         endedAt: new Date(body.data.endPoint.timestamp),
         endAddress: body.data.endAddress ?? null,
+      },
+    });
+    return reply.send(updated);
+  });
+
+  // Update trip metadata (purpose)
+  app.patch("/trips/:id", auth, async (request, reply) => {
+    const userId = (request.user as any).sub;
+    const { id } = request.params as { id: string };
+    const body = updateTripSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const trip = await prisma.trip.findFirst({ where: { id, userId } });
+    if (!trip) return reply.status(404).send({ error: "Not found" });
+
+    const updated = await prisma.trip.update({
+      where: { id },
+      data: body.data,
+      select: {
+        id: true, userId: true,
+        status: true, startedAt: true, endedAt: true,
+        distanceMeters: true, startAddress: true, endAddress: true,
+        purpose: true, createdAt: true, updatedAt: true,
       },
     });
     return reply.send(updated);
