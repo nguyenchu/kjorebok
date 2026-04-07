@@ -1,12 +1,13 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useState,
   type ReactNode,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { api, setToken, clearToken } from "./api";
+import { api, setToken, clearToken, setUnauthorizedHandler } from "./api";
 import { stopTracking } from "./tripTracker";
 import type { User, LoginDto, RegisterDto } from "@kjorebok/shared";
 
@@ -29,12 +30,14 @@ const TOKEN_KEY = "token";
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
-  const clearSession = async () => {
-    await stopTracking().catch(() => {});
+  const clearSession = useCallback(async ({ stop = false } = {}) => {
+    if (stop) {
+      await stopTracking().catch(() => {});
+    }
     await clearToken();
     await AsyncStorage.removeItem(USER_KEY);
     setState({ user: null, loading: false });
-  };
+  }, []);
 
   // Rehydrate from storage on mount
   useEffect(() => {
@@ -50,6 +53,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => setState({ user: null, loading: false }));
   }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => clearSession());
+    return () => setUnauthorizedHandler(null);
+  }, [clearSession]);
 
   const login = async (dto: LoginDto) => {
     const { user, token } = await api.post<{ user: User; token: string }>(
@@ -72,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await clearSession();
+    await clearSession({ stop: true });
   };
 
   return (

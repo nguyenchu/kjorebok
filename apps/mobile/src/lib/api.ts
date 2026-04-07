@@ -2,6 +2,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3020";
 
+let unauthorizedHandler: (() => void | Promise<void>) | null = null;
+
 function formatApiError(error: unknown, fallback: string): string {
   if (typeof error === "string") return error;
   if (!error || typeof error !== "object") return fallback;
@@ -38,6 +40,12 @@ export async function clearToken(): Promise<void> {
   await AsyncStorage.removeItem("token");
 }
 
+export function setUnauthorizedHandler(
+  handler: (() => void | Promise<void>) | null
+): void {
+  unauthorizedHandler = handler;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getToken();
   const url = `${BASE_URL}${path}`;
@@ -58,6 +66,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 401 && token && unauthorizedHandler) {
+      await unauthorizedHandler();
+    }
     throw new Error(formatApiError(err.error, `HTTP ${res.status}`));
   }
   if (res.status === 204) return undefined as T;
