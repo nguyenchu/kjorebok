@@ -6,6 +6,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
 import * as TaskManager from "expo-task-manager";
 import { api, getToken } from "./api";
 import type { GpsPoint } from "@kjorebok/shared";
@@ -473,6 +474,14 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 });
 
 export async function requestPermissions(): Promise<boolean> {
+  const { status: notifStatus } = await Notifications.getPermissionsAsync();
+  if (notifStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== "granted") {
+      await appendLog("Mangler notifikasjonstillatelse — foreground service vil ikke vises.", "warn");
+    }
+  }
+
   const fgStatus = await Location.getForegroundPermissionsAsync();
   const fg =
     fgStatus.status === "granted"

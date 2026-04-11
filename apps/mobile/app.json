@@ -35,7 +35,15 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Kjørebok trenger GPS-tilgang for automatisk turregistrering."
+          "locationAlwaysAndWhenInUsePermission": "Kjørebok trenger GPS-tilgang for automatisk turregistrering.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "androidMode": "default"
         }
       ],
       "expo-router",
