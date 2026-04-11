@@ -2,19 +2,18 @@
   "name": "kjorebok",
   "private": true,
   "scripts": {
-    "dev": "turbo dev",
-    "dev:local": "./run-local.sh",
-    "dev:mobile": "corepack pnpm --filter @kjorebok/mobile dev",
-    "dev:mobile:android": "corepack pnpm --filter @kjorebok/mobile android",
-    "dev:mobile:android:device": "corepack pnpm --filter @kjorebok/mobile android:device",
-    "dev:mobile:android:local": "corepack pnpm --filter @kjorebok/mobile android:device:local",
-    "dev:mobile:android:server": "corepack pnpm --filter @kjorebok/mobile android:device:server",
+    "dev": "./run-local.sh",
     "dev:api": "corepack pnpm --filter @kjorebok/api dev",
     "dev:web": "corepack pnpm --filter @kjorebok/web dev",
+    "dev:mobile": "corepack pnpm --filter @kjorebok/mobile dev",
+    "dev:mobile:device": "corepack pnpm --filter @kjorebok/mobile android:device:server",
     "build": "turbo build",
     "lint": "turbo lint",
+    "db:start": "docker compose up -d",
+    "db:stop": "docker compose down",
+    "db:migrate": "turbo db:migrate",
     "db:generate": "turbo db:generate",
-    "db:migrate": "turbo db:migrate"
+    "db:studio": "corepack pnpm --filter @kjorebok/api db:studio"
   },
   "devDependencies": {
     "turbo": "^2.4.4",
