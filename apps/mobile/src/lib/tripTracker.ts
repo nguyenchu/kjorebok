@@ -35,6 +35,10 @@ const LAST_SAMPLE_KEY = "tracker_last_sample";
 const LAST_TASK_AT_KEY = "tracker_last_task_at";
 const LAST_SYNC_AT_KEY = "tracker_last_sync_at";
 const LOG_ENTRIES_KEY = "tracker_log_entries";
+const LAST_SPEED_KEY = "tracker_last_speed";
+const LAST_ACCURACY_KEY = "tracker_last_accuracy";
+const START_CANDIDATE_COUNT_KEY = "tracker_start_candidate_count";
+const START_REASON_KEY = "tracker_start_reason";
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
 
@@ -58,6 +62,10 @@ export interface TrackerDiagnostics {
   lastPointTimestamp: string | null;
   lastTaskAt: string | null;
   lastSyncAt: string | null;
+  lastSpeedKmh: number | null;
+  lastAccuracyMeters: number | null;
+  startCandidateCount: number;
+  startReason: string;
   recentEvents: TrackerLogEntry[];
 }
 
@@ -166,6 +174,43 @@ async function setLastSample(point: GpsPoint): Promise<void> {
   await set(LAST_SAMPLE_KEY, JSON.stringify(point));
 }
 
+async function setStartReason(reason: string): Promise<void> {
+  await set(START_REASON_KEY, reason);
+}
+
+async function getStartReason(): Promise<string> {
+  return (await get(START_REASON_KEY)) ?? "Telefonen venter på tydelig bevegelse.";
+}
+
+async function setStartCandidateCount(count: number): Promise<void> {
+  await set(START_CANDIDATE_COUNT_KEY, String(Math.max(0, count)));
+}
+
+async function getStartCandidateCount(): Promise<number> {
+  return Number((await get(START_CANDIDATE_COUNT_KEY)) ?? "0");
+}
+
+async function setLastTelemetry(point: GpsPoint): Promise<void> {
+  await set(LAST_SPEED_KEY, String(point.speed));
+  await set(LAST_ACCURACY_KEY, String(point.accuracy));
+}
+
+async function getLastSpeedKmh(): Promise<number | null> {
+  const raw = await get(LAST_SPEED_KEY);
+  if (!raw) return null;
+
+  const speed = Number(raw);
+  return Number.isFinite(speed) ? speed * 3.6 : null;
+}
+
+async function getLastAccuracyMeters(): Promise<number | null> {
+  const raw = await get(LAST_ACCURACY_KEY);
+  if (!raw) return null;
+
+  const accuracy = Number(raw);
+  return Number.isFinite(accuracy) ? accuracy : null;
+}
+
 function haversineMeters(a: GpsPoint, b: GpsPoint): number {
   const R = 6371000;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
@@ -199,6 +244,7 @@ async function detectMovement(point: GpsPoint): Promise<boolean> {
 
 async function storeLocationSample(point: GpsPoint): Promise<void> {
   await setLastSample(point);
+  await setLastTelemetry(point);
   await markTaskHeartbeat(point.timestamp);
 }
 
@@ -295,6 +341,8 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
     await markSyncSuccess();
     await set(ACTIVE_TRIP_KEY, trip.id);
     await set(STATE_KEY, "RECORDING");
+    await setStartReason("Tur er aktiv.");
+    await setStartCandidateCount(0);
     await clear(FAST_COUNT_KEY);
     await appendLog("Tur startet automatisk.");
     return true;
@@ -304,6 +352,8 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
       "error"
     );
     await set(STATE_KEY, "IDLE");
+    await setStartReason("Kunne ikke starte tur automatisk.");
+    await setStartCandidateCount(0);
     await clear(FAST_COUNT_KEY);
     return false;
   }
@@ -315,6 +365,8 @@ async function resetActiveTripState(): Promise<void> {
   await clear(STOP_TIME_KEY);
   await clear(LAST_POINT_KEY);
   await clear(LAST_SAMPLE_KEY);
+  await setStartCandidateCount(0);
+  await setStartReason("Telefonen venter på tydelig bevegelse.");
   await set(STATE_KEY, "IDLE");
 }
 
@@ -376,7 +428,13 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       if (moving && hasGoodAccuracy) {
         await set(STATE_KEY, "DETECTING_START");
         await set(FAST_COUNT_KEY, "1");
+        await setStartCandidateCount(1);
+        await setStartReason("Oppdaget bevegelse. Venter på en bekreftelse til før tur starter.");
         await appendLog("Oppdaget bevegelse som kan starte tur.");
+      } else if (!hasGoodAccuracy) {
+        await setStartReason(`Venter på bedre GPS-nøyaktighet. Siste måling var ${Math.round(point.accuracy)} meter.`);
+      } else {
+        await setStartReason("Venter på litt mer stabil bevegelse før tur starter automatisk.");
       }
       break;
     }
@@ -384,14 +442,22 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
     case "DETECTING_START": {
       if (moving && hasGoodAccuracy) {
         const count = Number((await get(FAST_COUNT_KEY)) ?? "0") + 1;
+        await setStartCandidateCount(count);
         if (count >= START_CONFIRM_POINTS) {
           await startTrip(point);
         } else {
           await set(FAST_COUNT_KEY, String(count));
+          await setStartReason("Bevegelsen ser lovende ut. Trenger ett punkt til for å starte tur.");
         }
       } else {
         await set(STATE_KEY, "IDLE");
         await clear(FAST_COUNT_KEY);
+        await setStartCandidateCount(0);
+        await setStartReason(
+          !hasGoodAccuracy
+            ? `Turstart ble avbrutt fordi GPS-nøyaktigheten var for svak (${Math.round(point.accuracy)} meter).`
+            : "Turstart ble avbrutt fordi bevegelsen stoppet opp igjen."
+        );
         await appendLog("Avbrøt turstart fordi farten falt igjen.", "warn");
       }
       break;
@@ -401,6 +467,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       const tripId = await get(ACTIVE_TRIP_KEY);
       if (!tripId) {
         await set(STATE_KEY, "IDLE");
+        await setStartReason("Ingen aktiv tur akkurat nå.");
         return;
       }
 
@@ -415,7 +482,10 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       if (speed < STOP_SPEED_MS && hasGoodAccuracy) {
         await set(STATE_KEY, "DETECTING_STOP");
         await set(STOP_TIME_KEY, String(loc.timestamp));
+        await setStartReason("Tur ser ut til å nærme seg stopp.");
         await appendLog("Mulig turstopp oppdaget.");
+      } else {
+        await setStartReason("Tur er aktiv.");
       }
       break;
     }
@@ -424,6 +494,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       const tripId = await get(ACTIVE_TRIP_KEY);
       if (!tripId) {
         await set(STATE_KEY, "IDLE");
+        await setStartReason("Ingen aktiv tur akkurat nå.");
         return;
       }
 
@@ -438,6 +509,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
             "error"
           );
         });
+        await setStartReason("Tur fortsetter.");
         await appendLog("Tur fortsetter etter kort stopp.");
         return;
       }
@@ -488,6 +560,7 @@ export async function requestPermissions(): Promise<boolean> {
       ? fgStatus
       : await Location.requestForegroundPermissionsAsync();
   if (fg.status !== "granted") {
+    await setStartReason("Gi appen tilgang til posisjon mens den er i bruk.");
     await appendLog("Mangler forgrunnslokasjon.", "warn");
     return false;
   }
@@ -499,8 +572,10 @@ export async function requestPermissions(): Promise<boolean> {
       : await Location.requestBackgroundPermissionsAsync();
 
   if (bg.status !== "granted") {
+    await setStartReason("Gi appen bakgrunnslokasjon for automatisk turstart.");
     await appendLog("Mangler bakgrunnslokasjon.", "warn");
   } else {
+    await setStartReason("Tillatelser er klare. Telefonen kan starte tur automatisk.");
     await appendLog("Bakgrunnslokasjon er klar.");
   }
 
@@ -513,6 +588,7 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
 
   const providerStatus = await Location.getProviderStatusAsync().catch(() => null);
   if (providerStatus && !providerStatus.locationServicesEnabled) {
+    await setStartReason("Skru på posisjonstjenester på telefonen.");
     await appendLog("Posisjonstjenester er av på telefonen.", "warn");
   }
 
@@ -528,8 +604,10 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
         notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
       },
     });
+    await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
     await appendLog("Bakgrunnssporing ble startet.");
   } else {
+    await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
     await appendLog("Bakgrunnssporing er allerede aktiv.");
   }
 
@@ -567,6 +645,62 @@ export async function syncActiveTrip(): Promise<void> {
   }
 }
 
+export async function startTripManually(): Promise<void> {
+  const tripId = await get(ACTIVE_TRIP_KEY);
+  if (tripId) {
+    await setStartReason("Du har allerede en aktiv tur.");
+    return;
+  }
+
+  const granted = await requestPermissions();
+  if (!granted) {
+    throw new Error("Bakgrunnslokasjon mangler.");
+  }
+
+  const location = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.High,
+  });
+  const point = toGpsPoint(location);
+  const started = await startTrip(point);
+
+  if (!started) {
+    throw new Error("Kunne ikke starte tur manuelt.");
+  }
+
+  await setLastSample(point);
+  await setLastTelemetry(point);
+  await setStartReason("Tur startet manuelt og registreres nå.");
+  await appendLog("Tur startet manuelt.");
+}
+
+export async function stopActiveTripManually(): Promise<void> {
+  const tripId = await get(ACTIVE_TRIP_KEY);
+  if (!tripId) {
+    await setStartReason("Ingen aktiv tur å stoppe.");
+    throw new Error("Ingen aktiv tur å stoppe.");
+  }
+
+  const fallbackPoint = await getLastPoint();
+  let point = fallbackPoint;
+
+  try {
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+    });
+    point = toGpsPoint(location);
+  } catch {
+    // Fall back to the latest known point if a fresh reading is unavailable.
+  }
+
+  if (!point) {
+    throw new Error("Fant ikke posisjon for å avslutte turen.");
+  }
+
+  await finishTrip(tripId, point);
+  await setStartReason("Tur ble stoppet manuelt.");
+  await appendLog("Tur stoppet manuelt.");
+}
+
 export async function stopTracking(): Promise<void> {
   const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
   if (isRunning) {
@@ -580,12 +714,16 @@ export async function stopTracking(): Promise<void> {
   await clear(PENDING_POINTS_KEY);
   await clear(LAST_POINT_KEY);
   await clear(LAST_SAMPLE_KEY);
+  await clear(LAST_SPEED_KEY);
+  await clear(LAST_ACCURACY_KEY);
+  await clear(START_CANDIDATE_COUNT_KEY);
   await appendLog("Bakgrunnssporing ble stoppet.", "warn");
+  await setStartReason("Bakgrunnssporing er stoppet.");
 }
 
 export async function getTrackerState(): Promise<TrackerDiagnostics> {
   const trackingEnabled = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  const [foregroundPermission, backgroundPermission, providerStatus, lastPoint, lastTaskAt, lastSyncAt, token, recentEvents] =
+  const [foregroundPermission, backgroundPermission, providerStatus, lastPoint, lastTaskAt, lastSyncAt, token, recentEvents, lastSpeedKmh, lastAccuracyMeters, startCandidateCount, startReason] =
     await Promise.all([
       Location.getForegroundPermissionsAsync()
         .then((result) => result.status)
@@ -599,6 +737,10 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
       get(LAST_SYNC_AT_KEY),
       getToken(),
       getRecentEvents(),
+      getLastSpeedKmh(),
+      getLastAccuracyMeters(),
+      getStartCandidateCount(),
+      getStartReason(),
     ]);
 
   return {
@@ -613,6 +755,10 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     lastPointTimestamp: lastPoint?.timestamp ?? null,
     lastTaskAt,
     lastSyncAt,
+    lastSpeedKmh,
+    lastAccuracyMeters,
+    startCandidateCount,
+    startReason,
     recentEvents,
   };
 }

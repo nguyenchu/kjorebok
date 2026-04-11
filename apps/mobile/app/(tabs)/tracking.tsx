@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, Linking } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { router } from "expo-router";
-import { ensureTrackingConfigured, getTrackerState, syncActiveTrip } from "@/lib/tripTracker";
+import {
+  ensureTrackingConfigured,
+  getTrackerState,
+  syncActiveTrip,
+} from "@/lib/tripTracker";
 import { formatDistanceToNowStrict } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -40,6 +44,10 @@ export default function TrackingScreen() {
   const [lastPointTimestamp, setLastPointTimestamp] = useState<string | null>(null);
   const [lastTaskAt, setLastTaskAt] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [lastSpeedKmh, setLastSpeedKmh] = useState<number | null>(null);
+  const [lastAccuracyMeters, setLastAccuracyMeters] = useState<number | null>(null);
+  const [startCandidateCount, setStartCandidateCount] = useState(0);
+  const [startReason, setStartReason] = useState("Telefonen venter på tydelig bevegelse.");
   const [recentEvents, setRecentEvents] = useState<
     Array<{ timestamp: string; level: "info" | "warn" | "error"; message: string }>
   >([]);
@@ -58,6 +66,10 @@ export default function TrackingScreen() {
     setLastPointTimestamp(tracker.lastPointTimestamp);
     setLastTaskAt(tracker.lastTaskAt);
     setLastSyncAt(tracker.lastSyncAt);
+    setLastSpeedKmh(tracker.lastSpeedKmh);
+    setLastAccuracyMeters(tracker.lastAccuracyMeters);
+    setStartCandidateCount(tracker.startCandidateCount);
+    setStartReason(tracker.startReason);
     setRecentEvents(tracker.recentEvents);
   };
 
@@ -113,15 +125,17 @@ export default function TrackingScreen() {
     if (!tracking) return "Bakgrunnsoppgaven kjører ikke ennå. Start den én gang, så holder appen seg klar i bakgrunnen.";
     if (taskSeemsStale) return "Appen er satt opp for bakgrunnssporing, men Android har ikke levert noen fersk bakgrunnsoppgave nylig. Sjekk at batterisparing ikke holder appen igjen.";
     if (pendingPoints > 0) return "Det ligger ventende punkter lokalt. De blir sendt automatisk når nett og sesjon er klare.";
+    if (!activeTripId) return startReason;
     return "Appen følger med i bakgrunnen og skal starte tur automatisk når den ser stabil bevegelse.";
-  }, [hasToken, locationServicesEnabled, needsPermission, pendingPoints, taskSeemsStale, tracking]);
+  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, startReason, taskSeemsStale, tracking]);
 
   const detailHint = useMemo(() => {
     if (pendingPoints > 0) return `${pendingPoints} punkt venter på synkronisering.`;
     if (activeTripId) return "En tur er aktiv akkurat nå.";
+    if (startCandidateCount > 0) return `Telefonen har sett ${startCandidateCount} av ${2} nødvendige starttegn.`;
     if (needsAttention) return "Trykk under for flere detaljer hvis noe ikke virker.";
     return "Alt ser klart ut akkurat nå.";
-  }, [activeTripId, needsAttention, pendingPoints]);
+  }, [activeTripId, needsAttention, pendingPoints, startCandidateCount]);
 
   const primaryAction = useMemo(() => {
     if (!hasToken) {
@@ -194,6 +208,16 @@ export default function TrackingScreen() {
         <Text style={styles.helperText}>{detailHint}</Text>
       </View>
 
+      <View style={styles.reasonCard}>
+        <Text style={styles.sectionTitle}>Hvorfor startet ingen tur?</Text>
+        <Text style={styles.reasonText}>{startReason}</Text>
+        <Text style={styles.reasonMeta}>
+          {lastSpeedKmh !== null ? `Siste fart ${lastSpeedKmh.toFixed(1)} km/t` : "Ingen fersk fart ennå"}
+          {" · "}
+          {lastAccuracyMeters !== null ? `GPS ±${Math.round(lastAccuracyMeters)} m` : "Ingen fersk GPS-nøyaktighet ennå"}
+        </Text>
+      </View>
+
       <TouchableOpacity style={[styles.button, needsAttention && styles.warningButton]} onPress={primaryAction.onPress} activeOpacity={0.85}>
         <Text style={styles.buttonText}>{primaryAction.label}</Text>
       </TouchableOpacity>
@@ -212,6 +236,10 @@ export default function TrackingScreen() {
             <Text style={styles.metaRow}>Posisjonstjenester: {locationServicesEnabled ? "På" : "Av"}</Text>
             <Text style={styles.metaRow}>Forgrunnslokasjon: {foregroundPermission}</Text>
             <Text style={styles.metaRow}>Bakgrunnslokasjon: {backgroundPermission}</Text>
+            <Text style={styles.metaRow}>Siste fart: {lastSpeedKmh !== null ? `${lastSpeedKmh.toFixed(1)} km/t` : "Ikke registrert"}</Text>
+            <Text style={styles.metaRow}>Siste GPS-nøyaktighet: {lastAccuracyMeters !== null ? `${Math.round(lastAccuracyMeters)} m` : "Ikke registrert"}</Text>
+            <Text style={styles.metaRow}>Startkandidater sett: {startCandidateCount}</Text>
+            <Text style={styles.metaRow}>Automatisk startstatus: {startReason}</Text>
             <Text style={styles.metaRow}>Sist bakgrunnsoppgave kjørte: {formatRelativeTime(lastTaskAt)}</Text>
             <Text style={styles.metaRow}>Siste GPS-punkt: {formatRelativeTime(lastPointTimestamp)}</Text>
             <Text style={styles.metaRow}>Siste vellykkede sync: {formatRelativeTime(lastSyncAt)}</Text>
@@ -284,6 +312,14 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
   },
+  reasonCard: {
+    backgroundColor: "#eff6ff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
@@ -294,6 +330,17 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontSize: 14,
     lineHeight: 20,
+  },
+  reasonText: {
+    color: "#1e3a8a",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "600",
+  },
+  reasonMeta: {
+    color: "#475569",
+    fontSize: 13,
+    marginTop: 10,
   },
   metaRow: {
     color: "#334155",
@@ -307,8 +354,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
+  manualButton: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 18,
+    alignItems: "center",
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
   warningButton: { backgroundColor: "#0f172a" },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  manualButtonText: { color: "#0f172a", fontSize: 16, fontWeight: "700" },
   secondaryButton: {
     alignItems: "center",
     paddingVertical: 10,

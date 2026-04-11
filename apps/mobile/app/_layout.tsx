@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { Stack, router, useSegments } from "expo-router";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { ensureTrackingConfigured } from "@/lib/tripTracker";
+import { ensureTrackingConfigured, BACKGROUND_LOCATION_TASK } from "@/lib/tripTracker";
 
 function NavigationGuard() {
   const { user, loading } = useAuth();
@@ -27,8 +29,37 @@ function TrackingBootstrap() {
   useEffect(() => {
     if (loading || !user) return;
 
-    const handle = setTimeout(() => {
-      ensureTrackingConfigured().catch(() => {});
+    const handle = setTimeout(async () => {
+      const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
+      if (alreadyRunning) {
+        ensureTrackingConfigured().catch(() => {});
+        return;
+      }
+
+      const shown = await AsyncStorage.getItem("tracking_rationale_shown").catch(() => null);
+      if (shown) {
+        ensureTrackingConfigured().catch(() => {});
+        return;
+      }
+
+      Alert.alert(
+        "Automatisk turregistrering",
+        "Kjørebok bruker GPS til å oppdage når du starter og avslutter en kjøretur — helt automatisk, uten at du trenger å gjøre noe.\n\nLokasjonen din brukes kun til å registrere turer og deles ikke med andre.",
+        [
+          {
+            text: "Gi tillatelse",
+            onPress: () => {
+              AsyncStorage.setItem("tracking_rationale_shown", "1").catch(() => {});
+              ensureTrackingConfigured().catch(() => {});
+            },
+          },
+          {
+            text: "Ikke nå",
+            style: "cancel",
+            onPress: () => AsyncStorage.setItem("tracking_rationale_shown", "1").catch(() => {}),
+          },
+        ]
+      );
     }, 1200);
 
     return () => clearTimeout(handle);
