@@ -7,9 +7,14 @@ import React, {
 } from "react";
 import type { User, LoginDto, RegisterDto } from "@kjorebok/shared";
 import { setUnauthorizedHandler } from "./api";
+import { getApiBaseUrl } from "./config";
 
 function getBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL ?? "/api";
+  return getApiBaseUrl();
+}
+
+function getNetworkErrorMessage(): string {
+  return `Kunne ikke kontakte API på ${getBaseUrl()}. Sjekk at endepunktet er tilgjengelig og prøv igjen.`;
 }
 
 interface AuthState {
@@ -58,8 +63,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    const raw = localStorage.getItem("auth_user");
-    setState({ user: raw ? JSON.parse(raw) : null, loading: false });
+    try {
+      const raw = localStorage.getItem("auth_user");
+      setState({ user: raw ? JSON.parse(raw) : null, loading: false });
+    } catch {
+      clearSession();
+    }
   }, []);
 
   useEffect(() => {
@@ -68,11 +77,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function post<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(`${getBaseUrl()}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+
+    try {
+      res = await fetch(`${getBaseUrl()}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new Error(getNetworkErrorMessage());
+    }
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(formatApiError(err.error, `HTTP ${res.status}`));
