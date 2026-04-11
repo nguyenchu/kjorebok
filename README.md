@@ -46,9 +46,9 @@ Lag lokale miljøfiler fra eksemplene:
 Anbefalt lokal flyt for web:
 
 - web: `http://localhost:3021`
-- API: `https://kjorebok.nguyenchu.com/api`
+- API: `http://localhost:3020`
 
-Hvis du vil utvikle API-et lokalt i stedet, kan du sette `NEXT_PUBLIC_API_URL=http://localhost:3020`.
+I production brukes `https://kjorebok.nguyenchu.com/api`.
 
 For Android-emulator bør mobilappen bruke:
 
@@ -70,9 +70,9 @@ Det starter:
 
 Merk:
 
-- web er normalt satt opp mot `https://kjorebok.nguyenchu.com/api`
-- du trenger derfor ikke starte lokal API bare for å teste web
-- hvis du vil jobbe lokalt med backend også, endre `apps/web/.env.local` til `http://localhost:3020`
+- web og mobil bruker lokal API i development som standard
+- production-bygg bruker `https://kjorebok.nguyenchu.com/api`
+- du kan fortsatt overstyre med `NEXT_PUBLIC_API_URL` eller `EXPO_PUBLIC_API_URL`
 
 Start mobilappen i en egen terminal:
 

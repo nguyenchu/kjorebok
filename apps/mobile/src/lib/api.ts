@@ -1,6 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "https://kjorebok.nguyenchu.com/api";
+const DEFAULT_API_URL = "https://kjorebok.nguyenchu.com/api";
+const LOCAL_API_URL = "http://localhost:3020";
+
+function resolveBaseUrl(): string {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+  return process.env.NODE_ENV === "production" ? DEFAULT_API_URL : LOCAL_API_URL;
+}
+
+const BASE_URL = resolveBaseUrl();
 
 export function getApiBaseUrl(): string {
   return BASE_URL;

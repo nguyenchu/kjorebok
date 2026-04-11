@@ -1,8 +1,13 @@
 const DEFAULT_ANDROID_DOWNLOAD_URL = "https://kjorebok.nguyenchu.com/download/android.apk";
 const DEFAULT_API_URL = "https://kjorebok.nguyenchu.com/api";
+const LOCAL_API_URL = "http://localhost:3020";
 
 export function getApiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  return process.env.NODE_ENV === "production" ? DEFAULT_API_URL : LOCAL_API_URL;
 }
 
 export function getAndroidDownloadUrl(): string | null {
