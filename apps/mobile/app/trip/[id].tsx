@@ -1,9 +1,40 @@
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, Stack } from "expo-router";
-import MapView, { Polyline, Marker } from "react-native-maps";
+import { WebView } from "react-native-webview";
 import { api } from "@/lib/api";
 import type { Trip } from "@kjorebok/shared";
+
+function buildMapHtml(coordinates: { lat: number; lng: number }[]): string {
+  const latlngs = JSON.stringify(coordinates.map((p) => [p.lat, p.lng]));
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    var latlngs = ${latlngs};
+    var map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+    var line = L.polyline(latlngs, { color: '#2563eb', weight: 4, opacity: 0.85 }).addTo(map);
+    map.fitBounds(line.getBounds(), { padding: [24, 24] });
+    if (latlngs.length > 0) {
+      L.circleMarker(latlngs[0], { radius: 7, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }).addTo(map);
+      L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }).addTo(map);
+    }
+  </script>
+</body>
+</html>`;
+}
 
 export default function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -18,18 +49,7 @@ export default function TripDetailScreen() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const coordinates = trip?.route.map((p) => ({ latitude: p.lat, longitude: p.lng })) ?? [];
-  const start = coordinates[0];
-  const end = coordinates[coordinates.length - 1];
-
-  const region = coordinates.length > 0
-    ? {
-        latitude: coordinates.reduce((s, c) => s + c.latitude, 0) / coordinates.length,
-        longitude: coordinates.reduce((s, c) => s + c.longitude, 0) / coordinates.length,
-        latitudeDelta: Math.max(...coordinates.map((c) => c.latitude)) - Math.min(...coordinates.map((c) => c.latitude)) + 0.01,
-        longitudeDelta: Math.max(...coordinates.map((c) => c.longitude)) - Math.min(...coordinates.map((c) => c.longitude)) + 0.01,
-      }
-    : undefined;
+  const hasRoute = (trip?.route.length ?? 0) > 0;
 
   return (
     <View style={styles.container}>
@@ -54,13 +74,14 @@ export default function TripDetailScreen() {
         </View>
       )}
 
-      {trip && region && (
+      {trip && hasRoute && (
         <>
-          <MapView style={styles.map} initialRegion={region}>
-            <Polyline coordinates={coordinates} strokeColor="#2563eb" strokeWidth={4} />
-            {start && <Marker coordinate={start} pinColor="green" />}
-            {end && coordinates.length > 1 && <Marker coordinate={end} pinColor="red" />}
-          </MapView>
+          <WebView
+            style={styles.map}
+            source={{ html: buildMapHtml(trip.route) }}
+            originWhitelist={["*"]}
+            scrollEnabled={false}
+          />
           <View style={styles.info}>
             <Text style={styles.infoDistance}>{(trip.distanceMeters / 1000).toFixed(1)} km</Text>
             <Text style={styles.infoMeta}>{trip.route.length} GPS-punkter · {trip.purpose === "WORK" ? "Jobb" : "Privat"}</Text>
@@ -68,7 +89,7 @@ export default function TripDetailScreen() {
         </>
       )}
 
-      {trip && !region && (
+      {trip && !hasRoute && (
         <View style={styles.center}>
           <Text style={styles.errorText}>Ingen GPS-punkter registrert for denne turen.</Text>
         </View>
