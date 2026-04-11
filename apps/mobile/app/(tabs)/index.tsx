@@ -189,7 +189,7 @@ export default function TripsScreen() {
   const load = useCallback(async () => {
     try {
       const data = await api.get<TripSummary[]>("/trips");
-      setTrips(data);
+      setTrips(data.filter((t) => t.status === "ACTIVE" || t.distanceMeters > 0));
       setError(null);
     } catch (e: any) {
       setError(e.message);

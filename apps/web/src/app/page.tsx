@@ -212,8 +212,9 @@ export default function DashboardPage() {
     }
   };
 
-  const dayLog = buildWeekLog(trips, selectedWeekOffset);
-  const maxWeekOffset = getMaxWeekOffset(trips);
+  const visibleTrips = trips.filter((trip) => trip.status === "ACTIVE" || trip.distanceMeters > 0);
+  const dayLog = buildWeekLog(visibleTrips, selectedWeekOffset);
+  const maxWeekOffset = getMaxWeekOffset(visibleTrips);
 
   useEffect(() => {
     if (selectedWeekOffset > maxWeekOffset) {
@@ -313,7 +314,7 @@ export default function DashboardPage() {
 
   const activeTrip = trips.find((trip) => trip.status === "ACTIVE") ?? null;
   const totalDistance = trips.reduce((sum, trip) => sum + trip.distanceMeters, 0);
-  const latestTrip = trips[0] ?? null;
+  const latestTrip = visibleTrips[0] ?? null;
   const selectedDay = dayLog.find((day) => format(day.day, "yyyy-MM-dd") === selectedDayKey) ?? dayLog[0] ?? null;
   const weekLabel = formatWeekRange(dayLog);
   const currentWeekStart = getWeekStart(0);
@@ -843,38 +844,61 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <footer
-        style={{
-          marginTop: "2rem",
-          paddingTop: "1rem",
-          borderTop: "1px solid var(--border)",
-          display: "flex",
-          justifyContent: "center",
-        }}
-      >
-        {androidDownloadUrl && (
-          <div style={{ textAlign: "center" }}>
-            <a
-              href={androidDownloadUrl}
-              style={{
-                color: "var(--text-soft)",
-                fontSize: "0.92rem",
-                fontWeight: 600,
-                textDecoration: "none",
-              }}
-            >
-              Last ned for Android (APK{androidVersion ? ` v${androidVersion.version}` : ""})
-            </a>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginTop: "0.45rem" }}>
+      {androidDownloadUrl && (
+        <div
+          style={{
+            marginTop: "2rem",
+            padding: "1.1rem 1.25rem",
+            background: "rgba(255,255,255,0.82)",
+            border: "1px solid var(--border)",
+            borderRadius: "20px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "1rem",
+            flexWrap: "wrap",
+            boxShadow: "0 12px 26px rgba(15, 23, 42, 0.05)",
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.2rem" }}>
+              Last ned Kjørebok for Android
+            </div>
+            <div style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
               {androidVersion
                 ? `Appversjon ${androidVersion.version}`
                 : androidVersionLoaded
                   ? "Appversjon utilgjengelig akkurat nå"
                   : "Henter appversjon..."}
-            </p>
+            </div>
           </div>
-        )}
-      </footer>
+          <a
+            href={androidDownloadUrl}
+            style={{
+              padding: "0.6rem 1.1rem",
+              background: "var(--text)",
+              color: "#fff",
+              borderRadius: "999px",
+              fontWeight: 700,
+              fontSize: "0.88rem",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Last ned APK{androidVersion ? ` v${androidVersion.version}` : ""}
+          </a>
+        </div>
+      )}
+
+      <footer
+        style={{
+          marginTop: "1.5rem",
+          paddingTop: "1rem",
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      />
     </div>
   );
 }
