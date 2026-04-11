@@ -43,10 +43,12 @@ Lag lokale miljøfiler fra eksemplene:
 - `apps/web/.env.local`
 - `apps/mobile/.env`
 
-Anbefalte porter lokalt:
+Anbefalt lokal flyt for web:
 
-- API: `http://localhost:3020`
 - web: `http://localhost:3021`
+- API: `https://kjorebok.nguyenchu.com/api`
+
+Hvis du vil utvikle API-et lokalt i stedet, kan du sette `NEXT_PUBLIC_API_URL=http://localhost:3020`.
 
 For Android-emulator bør mobilappen bruke:
 
@@ -64,8 +66,13 @@ corepack pnpm dev:local
 
 Det starter:
 
-- API på `http://localhost:3020`
 - web på `http://localhost:3021`
+
+Merk:
+
+- web er normalt satt opp mot `https://kjorebok.nguyenchu.com/api`
+- du trenger derfor ikke starte lokal API bare for å teste web
+- hvis du vil jobbe lokalt med backend også, endre `apps/web/.env.local` til `http://localhost:3020`
 
 Start mobilappen i en egen terminal:
 

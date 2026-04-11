@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl, getAndroidMetadataUrl } from "@/lib/config";
+import { getAndroidDownloadUrl, getAndroidMetadataUrl, getApiBaseUrl } from "@/lib/config";
 
 type Mode = "login" | "register";
 type AndroidReleaseMetadata = {
@@ -12,10 +12,11 @@ type AndroidReleaseMetadata = {
 };
 
 export default function LoginPage() {
-  const { login, register } = useAuth();
+  const { user, loading: authLoading, login, register } = useAuth();
   const router = useRouter();
   const androidDownloadUrl = getAndroidDownloadUrl();
   const androidMetadataUrl = getAndroidMetadataUrl();
+  const apiBaseUrl = getApiBaseUrl();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -23,6 +24,13 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [androidVersion, setAndroidVersion] = useState<AndroidReleaseMetadata | null>(null);
+  const [androidVersionLoaded, setAndroidVersionLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace("/");
+    }
+  }, [authLoading, router, user]);
 
   useEffect(() => {
     if (!androidMetadataUrl) return;
@@ -35,10 +43,16 @@ export default function LoginPage() {
         return (await response.json()) as AndroidReleaseMetadata;
       })
       .then((data) => {
-        if (!cancelled) setAndroidVersion(data);
+        if (!cancelled) {
+          setAndroidVersion(data);
+          setAndroidVersionLoaded(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setAndroidVersion(null);
+        if (!cancelled) {
+          setAndroidVersion(null);
+          setAndroidVersionLoaded(true);
+        }
       });
 
     return () => {
@@ -65,6 +79,8 @@ export default function LoginPage() {
     }
   };
 
+  if (authLoading) return null;
+
   return (
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center",
@@ -76,6 +92,9 @@ export default function LoginPage() {
         </h1>
         <p style={{ textAlign: "center", color: "var(--text-muted)", marginBottom: "2rem" }}>
           {mode === "login" ? "Logg inn for å fortsette" : "Opprett ny konto"}
+        </p>
+        <p style={{ textAlign: "center", color: "var(--text-soft)", fontSize: "0.82rem", marginBottom: "1rem" }}>
+          API: {apiBaseUrl}
         </p>
 
         <form onSubmit={submit} style={{
@@ -142,25 +161,29 @@ export default function LoginPage() {
           <p style={{ color: "var(--text-muted)", fontSize: "0.92rem", marginBottom: androidDownloadUrl ? "0.8rem" : 0 }}>
             Turene registreres på mobilen og blir synlige her i weboversikten.
           </p>
-          {androidVersion && (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.8rem" }}>
-              Tilgjengelig versjon: {androidVersion.version}
-            </p>
-          )}
           {androidDownloadUrl && (
-            <a
-              href={androidDownloadUrl}
-              style={{
-                display: "inline-block",
-                background: "var(--primary)",
-                color: "#fff",
-                padding: "0.75rem 0.95rem",
-                borderRadius: "999px",
-                fontWeight: 700,
-              }}
-            >
-              Last ned Android-app{androidVersion ? ` v${androidVersion.version}` : ""}
-            </a>
+            <div>
+              <a
+                href={androidDownloadUrl}
+                style={{
+                  display: "inline-block",
+                  background: "var(--primary)",
+                  color: "#fff",
+                  padding: "0.75rem 0.95rem",
+                  borderRadius: "999px",
+                  fontWeight: 700,
+                }}
+              >
+                Last ned for Android (APK{androidVersion ? ` v${androidVersion.version}` : ""})
+              </a>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginTop: "0.55rem" }}>
+                {androidVersion
+                  ? `Appversjon ${androidVersion.version}`
+                  : androidVersionLoaded
+                    ? "Appversjon utilgjengelig akkurat nå"
+                    : "Henter appversjon..."}
+              </p>
+            </div>
           )}
         </div>
       </div>

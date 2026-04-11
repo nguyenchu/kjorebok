@@ -1,6 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3020";
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "https://kjorebok.nguyenchu.com/api";
+
+export function getApiBaseUrl(): string {
+  return BASE_URL;
+}
 
 let unauthorizedHandler: (() => void | Promise<void>) | null = null;
 

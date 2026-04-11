@@ -12,11 +12,13 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/api";
 
 type Mode = "login" | "register";
 
 export default function LoginScreen() {
   const { login, register } = useAuth();
+  const apiBaseUrl = getApiBaseUrl();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -57,6 +59,7 @@ export default function LoginScreen() {
           <Text style={styles.subtitle}>
             {mode === "login" ? "Logg inn for å fortsette" : "Opprett ny konto"}
           </Text>
+          <Text style={styles.apiText}>API: {apiBaseUrl}</Text>
         </View>
 
         <View style={styles.card}>
@@ -137,6 +140,7 @@ const styles = StyleSheet.create({
   logo: { fontSize: 48, marginBottom: 12 },
   title: { fontSize: 32, fontWeight: "800", color: "#0f172a", marginBottom: 8 },
   subtitle: { color: "#64748b", fontSize: 16 },
+  apiText: { color: "#64748b", fontSize: 12, marginTop: 8, textAlign: "center" },
   card: {
     backgroundColor: "#fff",
     borderRadius: 20,
