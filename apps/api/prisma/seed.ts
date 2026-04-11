@@ -1,6 +1,7 @@
 /**
  * Seed script for local development.
  * Generates fake trips for the first user in the database.
+ * Routes follow real roads via OSRM (no API key required).
  *
  * Usage:
  *   pnpm --filter @kjorebok/api db:seed
@@ -32,18 +33,60 @@ function haversine([lat1, lng1]: [number, number], [lat2, lng2]: [number, number
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function buildRoute(from: [number, number], to: [number, number], startedAt: Date) {
+async function fetchRoadRoute(
+  from: [number, number],
+  to: [number, number],
+): Promise<[number, number][] | null> {
+  const url = `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const coords = data?.routes?.[0]?.geometry?.coordinates as [number, number][] | undefined;
+    if (!coords) return null;
+    return coords.map(([lng, lat]) => [lat, lng]);
+  } catch {
+    return null;
+  }
+}
+
+function buildRouteFromCoords(
+  coords: [number, number][],
+  startedAt: Date,
+): { route: object[]; durationMs: number; distanceMeters: number } {
+  let distanceMeters = 0;
+  for (let i = 1; i < coords.length; i++) {
+    distanceMeters += haversine(coords[i - 1], coords[i]);
+  }
+
+  const speedMs = 45 / 3.6;
+  const durationMs = (distanceMeters / speedMs) * 1000;
+
+  const route = coords.map((coord, i) => ({
+    lat: coord[0],
+    lng: coord[1],
+    speed: speedMs + (Math.random() - 0.5) * 4,
+    heading: i < coords.length - 1
+      ? Math.atan2(coords[i + 1][1] - coord[1], coords[i + 1][0] - coord[0]) * (180 / Math.PI)
+      : 0,
+    accuracy: 5 + Math.random() * 8,
+    timestamp: new Date(startedAt.getTime() + (durationMs * i) / (coords.length - 1)).toISOString(),
+  }));
+
+  return { route, durationMs, distanceMeters: Math.round(distanceMeters) };
+}
+
+function buildRouteStraight(from: [number, number], to: [number, number], startedAt: Date) {
   const distance = haversine(from, to);
   const speedMs = 45 / 3.6;
   const durationMs = (distance / speedMs) * 1000;
-  const steps = Math.max(10, Math.round(distance / 80)); // one point per ~80m
+  const steps = Math.max(10, Math.round(distance / 80));
 
   const route = Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
-    const jitter = () => (Math.random() - 0.5) * 0.0001;
     return {
-      lat: from[0] + (to[0] - from[0]) * t + jitter(),
-      lng: from[1] + (to[1] - from[1]) * t + jitter(),
+      lat: from[0] + (to[0] - from[0]) * t,
+      lng: from[1] + (to[1] - from[1]) * t,
       speed: speedMs + (Math.random() - 0.5) * 3,
       heading: Math.atan2(to[1] - from[1], to[0] - from[0]) * (180 / Math.PI),
       accuracy: 5 + Math.random() * 10,
@@ -85,16 +128,20 @@ const TRIPS: { from: number; to: number; purpose: "PRIVATE" | "WORK"; daysAgo: n
 ];
 
 async function main() {
-  const user = await prisma.user.findFirst();
+  const user = await prisma.user.findFirst({ where: { email: "toeffen@gmail.com" } })
+    ?? await prisma.user.findFirst();
+
   if (!user) {
-    console.error("Ingen bruker funnet. Logg inn i web-appen først for å opprette en bruker.");
+    console.error("Ingen bruker funnet. Logg inn i web-appen først.");
     process.exit(1);
   }
 
+  const userId = user.id;
   console.log(`Legger til turer for: ${user.email}`);
-  await prisma.trip.deleteMany({ where: { userId: user.id } });
+  await prisma.trip.deleteMany({ where: { userId } });
 
   const now = new Date();
+  let roadRoutes = 0;
 
   for (const spec of TRIPS) {
     const from = PLACES[spec.from];
@@ -104,11 +151,14 @@ async function main() {
     startedAt.setDate(startedAt.getDate() - spec.daysAgo);
     startedAt.setHours(spec.hour, Math.floor(Math.random() * 30), 0, 0);
 
-    const { route, durationMs, distanceMeters } = buildRoute(from.coords, to.coords, startedAt);
+    const roadCoords = await fetchRoadRoute(from.coords, to.coords);
+    const { route, durationMs, distanceMeters } = roadCoords
+      ? (roadRoutes++, buildRouteFromCoords(roadCoords, startedAt))
+      : buildRouteStraight(from.coords, to.coords, startedAt);
 
     await prisma.trip.create({
       data: {
-        userId: user.id,
+        userId,
         status: "COMPLETED",
         startedAt,
         endedAt: new Date(startedAt.getTime() + durationMs),
@@ -121,7 +171,7 @@ async function main() {
     });
   }
 
-  console.log(`${TRIPS.length} turer opprettet.`);
+  console.log(`${TRIPS.length} turer opprettet (${roadRoutes} med veiruter, ${TRIPS.length - roadRoutes} rette linjer).`);
 }
 
 main()
