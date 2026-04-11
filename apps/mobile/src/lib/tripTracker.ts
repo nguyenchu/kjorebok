@@ -20,7 +20,9 @@ const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 25;
 const MAX_PENDING_POINTS = 500;
 const MAX_START_ACCURACY_METERS = 80;
+const MAX_ROUTE_ACCURACY_METERS = 30;
 const MIN_MOVEMENT_DISTANCE_METERS = 20;
+const MIN_ROUTE_POINT_DISTANCE_METERS = 10;
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 1000;
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
@@ -249,21 +251,30 @@ async function storeLocationSample(point: GpsPoint): Promise<void> {
 }
 
 async function enqueuePoint(point: GpsPoint): Promise<void> {
+  await setLastPoint(point);
+
+  if (point.accuracy <= 0 || point.accuracy > MAX_ROUTE_ACCURACY_METERS) {
+    return;
+  }
+
   const points = await getPendingPoints();
   const last = points[points.length - 1];
 
-  if (
-    last &&
-    last.timestamp === point.timestamp &&
-    last.lat === point.lat &&
-    last.lng === point.lng
-  ) {
-    return;
+  if (last) {
+    if (
+      last.timestamp === point.timestamp &&
+      last.lat === point.lat &&
+      last.lng === point.lng
+    ) {
+      return;
+    }
+    if (haversineMeters(last, point) < MIN_ROUTE_POINT_DISTANCE_METERS) {
+      return;
+    }
   }
 
   points.push(point);
   await setPendingPoints(points);
-  await setLastPoint(point);
 }
 
 function toGpsPoint(loc: Location.LocationObject): GpsPoint {
