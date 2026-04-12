@@ -41,6 +41,8 @@ const LAST_SPEED_KEY = "tracker_last_speed";
 const LAST_ACCURACY_KEY = "tracker_last_accuracy";
 const START_CANDIDATE_COUNT_KEY = "tracker_start_candidate_count";
 const START_REASON_KEY = "tracker_start_reason";
+const START_FAIL_COUNT_KEY = "tracker_start_fail_count";
+const MAX_START_FAIL_COUNT = 3;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
 
@@ -376,6 +378,7 @@ async function resetActiveTripState(): Promise<void> {
   await clear(STOP_TIME_KEY);
   await clear(LAST_POINT_KEY);
   await clear(LAST_SAMPLE_KEY);
+  await clear(START_FAIL_COUNT_KEY);
   await setStartCandidateCount(0);
   await setStartReason("Telefonen venter på tydelig bevegelse.");
   await set(STATE_KEY, "IDLE");
@@ -452,6 +455,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
     case "DETECTING_START": {
       if (moving && hasGoodAccuracy) {
+        await clear(START_FAIL_COUNT_KEY);
         const count = Number((await get(FAST_COUNT_KEY)) ?? "0") + 1;
         await setStartCandidateCount(count);
         if (count >= START_CONFIRM_POINTS) {
@@ -461,15 +465,26 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
           await setStartReason("Bevegelsen ser lovende ut. Trenger ett punkt til for å starte tur.");
         }
       } else {
-        await set(STATE_KEY, "IDLE");
-        await clear(FAST_COUNT_KEY);
-        await setStartCandidateCount(0);
-        await setStartReason(
-          !hasGoodAccuracy
-            ? `Turstart ble avbrutt fordi GPS-nøyaktigheten var for svak (${Math.round(point.accuracy)} meter).`
-            : "Turstart ble avbrutt fordi bevegelsen stoppet opp igjen."
-        );
-        await appendLog("Avbrøt turstart fordi farten falt igjen.", "warn");
+        const failCount = Number((await get(START_FAIL_COUNT_KEY)) ?? "0") + 1;
+        if (failCount >= MAX_START_FAIL_COUNT) {
+          await clear(START_FAIL_COUNT_KEY);
+          await clear(FAST_COUNT_KEY);
+          await set(STATE_KEY, "IDLE");
+          await setStartCandidateCount(0);
+          await setStartReason(
+            !hasGoodAccuracy
+              ? `Turstart ble avbrutt fordi GPS-nøyaktigheten var for svak (${Math.round(point.accuracy)} meter).`
+              : "Turstart ble avbrutt fordi bevegelsen stoppet opp igjen."
+          );
+          await appendLog("Avbrøt turstart fordi farten falt igjen.", "warn");
+        } else {
+          await set(START_FAIL_COUNT_KEY, String(failCount));
+          await setStartReason(
+            !hasGoodAccuracy
+              ? `Venter — GPS-nøyaktighet svak (${Math.round(point.accuracy)} m). Forsøk ${failCount}/${MAX_START_FAIL_COUNT}.`
+              : `Venter — bevegelse usikker. Forsøk ${failCount}/${MAX_START_FAIL_COUNT}.`
+          );
+        }
       }
       break;
     }
@@ -728,6 +743,7 @@ export async function stopTracking(): Promise<void> {
   await clear(LAST_SPEED_KEY);
   await clear(LAST_ACCURACY_KEY);
   await clear(START_CANDIDATE_COUNT_KEY);
+  await clear(START_FAIL_COUNT_KEY);
   await appendLog("Bakgrunnssporing ble stoppet.", "warn");
   await setStartReason("Bakgrunnssporing er stoppet.");
 }
