@@ -59,6 +59,10 @@ export default function TripDetailScreen() {
             ? `${trip.startAddress ?? "Ukjent start"} → ${trip.endAddress ?? "Ukjent slutt"}`
             : "Tur",
           headerBackTitle: "Tilbake",
+          headerStyle: { backgroundColor: "#eef6ff" },
+          headerShadowVisible: false,
+          headerTintColor: "#0f172a",
+          headerTitleStyle: { fontWeight: "700", fontSize: 18, color: "#0f172a" },
         }}
       />
 

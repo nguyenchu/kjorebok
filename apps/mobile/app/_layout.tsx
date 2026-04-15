@@ -3,6 +3,7 @@ import { Stack, router, useSegments } from "expo-router";
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ensureTrackingConfigured, BACKGROUND_LOCATION_TASK } from "@/lib/tripTracker";
 
@@ -87,6 +88,7 @@ function RootNavigator() {
 
   return (
     <>
+      <StatusBar style="dark" backgroundColor="#eef6ff" />
       <NavigationGuard />
       <TrackingBootstrap />
       <Stack screenOptions={{ headerShown: false }}>

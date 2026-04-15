@@ -4,7 +4,7 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { router } from "expo-router";
 import { api } from "@/lib/api";
 import type { TripMode, TripPurpose, TripSummary } from "@kjorebok/shared";
-import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek } from "date-fns";
+import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek, subDays } from "date-fns";
 import { nb } from "date-fns/locale";
 
 type DayGroup = {
@@ -17,15 +17,21 @@ function formatDistance(meters: number) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
 }
 
+function isDayBeforeYesterday(date: Date): boolean {
+  return isSameDay(date, subDays(new Date(), 2));
+}
+
 function formatDayHeader(date: Date): string {
   if (isToday(date)) return "I dag";
   if (isYesterday(date)) return "I går";
+  if (isDayBeforeYesterday(date)) return "Forgårs";
   return format(date, "EEEE d. MMMM", { locale: nb });
 }
 
 function formatDayTabLabel(date: Date): string {
   if (isToday(date)) return "I dag";
   if (isYesterday(date)) return "I går";
+  if (isDayBeforeYesterday(date)) return "Forgårs";
   return format(date, "EEEE", { locale: nb });
 }
 
@@ -60,7 +66,9 @@ function buildWeekGroups(trips: TripSummary[], weekOffset: number): DayGroup[] {
     const day = addDays(weekStart, offset);
     if (weekOffset === 0 && day > today) return null;
     const key = format(day, "yyyy-MM-dd");
-    const dayTrips = groups.get(key) ?? [];
+    const dayTrips = [...(groups.get(key) ?? [])].sort(
+      (a, b) => parseISO(a.startedAt).getTime() - parseISO(b.startedAt).getTime(),
+    );
     const dayStart = day.getTime();
     const previousTrip = trips.find((trip) => parseISO(trip.startedAt).getTime() < dayStart && getTripAddress(trip));
 

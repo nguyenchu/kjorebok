@@ -53,7 +53,7 @@ Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
-    shouldPlaySound: false,
+    shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
@@ -364,7 +364,7 @@ async function flushPendingPoints(tripId: string): Promise<void> {
 async function sendNotification(title: string, body: string): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({
-      content: { title, body, sound: false },
+      content: { title, body, sound: "default" },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
         seconds: 1,
@@ -380,10 +380,10 @@ async function ensureNotificationChannel(): Promise<void> {
   try {
     await Notifications.setNotificationChannelAsync(TRIP_NOTIFICATION_CHANNEL, {
       name: "Turer",
-      importance: Notifications.AndroidImportance.DEFAULT,
-      sound: null,
-      vibrationPattern: null,
-      enableVibrate: false,
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: "default",
+      vibrationPattern: [0, 250, 150, 250],
+      enableVibrate: true,
     });
   } catch {
     // Android only — safe to ignore on iOS

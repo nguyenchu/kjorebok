@@ -9,9 +9,13 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: true,
+        sceneStyle: {
+          backgroundColor: "#f5f8ff",
+        },
         tabBarActiveTintColor: "#2563eb",
         tabBarInactiveTintColor: "#94a3b8",
         tabBarStyle: {
+          backgroundColor: "#ffffff",
           borderTopWidth: 0,
           elevation: 8,
           shadowColor: "#000",
@@ -26,7 +30,8 @@ export default function TabsLayout() {
           fontWeight: "600",
         },
         headerShadowVisible: false,
-        headerStyle: { backgroundColor: "#f8fafc" },
+        headerStyle: { backgroundColor: "#eef6ff" },
+        headerTintColor: "#0f172a",
         headerTitleStyle: { fontWeight: "700", fontSize: 18, color: "#0f172a" },
       }}
     >
