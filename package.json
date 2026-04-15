@@ -13,7 +13,8 @@
     "db:stop": "docker compose down",
     "db:migrate": "turbo db:migrate",
     "db:generate": "turbo db:generate",
-    "db:studio": "corepack pnpm --filter @kjorebok/api db:studio"
+    "db:studio": "corepack pnpm --filter @kjorebok/api db:studio",
+    "mobile:bump": "node scripts/bump-mobile.mjs"
   },
   "devDependencies": {
     "turbo": "^2.4.4",
