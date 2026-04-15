@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, Linking } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { router } from "expo-router";
+import Constants from "expo-constants";
 import {
   ensureTrackingConfigured,
   getTrackerState,
@@ -230,6 +231,7 @@ export default function TrackingScreen() {
         <>
           <View style={styles.metaCard}>
             <Text style={styles.sectionTitle}>Detaljer</Text>
+            <Text style={styles.metaRow}>App-versjon: {Constants.expoConfig?.version ?? "ukjent"}</Text>
             {activeTripId && <Text style={styles.metaRow}>Aktiv tur: {activeTripId.slice(0, 8)}...</Text>}
             <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
             <Text style={styles.metaRow}>Innlogget sesjon: {hasToken ? "Ja" : "Nei"}</Text>
