@@ -39,6 +39,12 @@ export default function TrackingScreen() {
   const [activeTripId, setActiveTripId] = useState<string | null>(null);
   const [pendingPoints, setPendingPoints] = useState(0);
   const [hasToken, setHasToken] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState("undetermined");
+  const [tripNotificationChannel, setTripNotificationChannel] = useState("trips");
+  const [backgroundNotificationChannel, setBackgroundNotificationChannel] = useState("no.kjorebok.app:kjorebok-background-location");
+  const [availableNotificationChannels, setAvailableNotificationChannels] = useState<
+    Array<{ id: string; name: string | null; importance: number }>
+  >([]);
   const [locationServicesEnabled, setLocationServicesEnabled] = useState(false);
   const [foregroundPermission, setForegroundPermission] = useState("undetermined");
   const [backgroundPermission, setBackgroundPermission] = useState("undetermined");
@@ -61,6 +67,10 @@ export default function TrackingScreen() {
     setActiveTripId(tracker.activeTripId);
     setPendingPoints(tracker.pendingPoints);
     setHasToken(tracker.hasToken);
+    setNotificationPermission(tracker.notificationPermission);
+    setTripNotificationChannel(tracker.tripNotificationChannel);
+    setBackgroundNotificationChannel(tracker.backgroundNotificationChannel);
+    setAvailableNotificationChannels(tracker.availableNotificationChannels);
     setLocationServicesEnabled(tracker.locationServicesEnabled);
     setForegroundPermission(tracker.foregroundPermission);
     setBackgroundPermission(tracker.backgroundPermission);
@@ -235,6 +245,7 @@ export default function TrackingScreen() {
             {activeTripId && <Text style={styles.metaRow}>Aktiv tur: {activeTripId.slice(0, 8)}...</Text>}
             <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
             <Text style={styles.metaRow}>Innlogget sesjon: {hasToken ? "Ja" : "Nei"}</Text>
+            <Text style={styles.metaRow}>Notifikasjonstillatelse: {notificationPermission}</Text>
             <Text style={styles.metaRow}>Posisjonstjenester: {locationServicesEnabled ? "På" : "Av"}</Text>
             <Text style={styles.metaRow}>Forgrunnslokasjon: {foregroundPermission}</Text>
             <Text style={styles.metaRow}>Bakgrunnslokasjon: {backgroundPermission}</Text>
@@ -245,6 +256,26 @@ export default function TrackingScreen() {
             <Text style={styles.metaRow}>Sist bakgrunnsoppgave kjørte: {formatRelativeTime(lastTaskAt)}</Text>
             <Text style={styles.metaRow}>Siste GPS-punkt: {formatRelativeTime(lastPointTimestamp)}</Text>
             <Text style={styles.metaRow}>Siste vellykkede sync: {formatRelativeTime(lastSyncAt)}</Text>
+          </View>
+
+          <View style={styles.metaCard}>
+            <Text style={styles.sectionTitle}>Notifikasjonsdiagnose</Text>
+            <Text style={styles.metaRow}>Turvarsler kanal: {tripNotificationChannel}</Text>
+            <Text style={styles.metaRow}>Bakgrunnssporing kanal: {backgroundNotificationChannel}</Text>
+            <Text style={styles.metaRow}>
+              Android-kanaler på enheten: {availableNotificationChannels.length > 0 ? availableNotificationChannels.length : "Ingen registrert ennå"}
+            </Text>
+            {availableNotificationChannels.length > 0 ? (
+              availableNotificationChannels.map((channel) => (
+                <Text key={channel.id} style={styles.metaRow}>
+                  {channel.id} · {channel.name ?? "uten navn"} · viktighet {channel.importance}
+                </Text>
+              ))
+            ) : (
+              <Text style={styles.metaRow}>
+                Hvis listen er tom, er kanalene trolig ikke opprettet ennå på denne enheten.
+              </Text>
+            )}
           </View>
 
           <View style={styles.logCard}>

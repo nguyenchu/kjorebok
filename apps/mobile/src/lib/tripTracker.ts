@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as TaskManager from "expo-task-manager";
+import { Platform } from "react-native";
 import { api, getToken } from "./api";
 import type { GpsPoint } from "@kjorebok/shared";
 
@@ -25,6 +26,7 @@ const MIN_MOVEMENT_DISTANCE_METERS = 8; // lavere terskel for gåtur-deteksjon
 const MIN_ROUTE_POINT_DISTANCE_METERS = 5; // tettere punkter for gåturer
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 1000;
 const TRIP_NOTIFICATION_CHANNEL = "trips";
+const BACKGROUND_NOTIFICATION_CHANNEL = "no.kjorebok.app:kjorebok-background-location";
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 
@@ -47,6 +49,15 @@ const MAX_START_FAIL_COUNT = 6;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
 type LogLevel = "info" | "warn" | "error";
 
 export interface TrackerLogEntry {
@@ -61,6 +72,14 @@ export interface TrackerDiagnostics {
   pendingPoints: number;
   trackingEnabled: boolean;
   hasToken: boolean;
+  notificationPermission: Notifications.PermissionStatus;
+  tripNotificationChannel: string;
+  backgroundNotificationChannel: string;
+  availableNotificationChannels: Array<{
+    id: string;
+    name: string | null;
+    importance: number;
+  }>;
   locationServicesEnabled: boolean;
   foregroundPermission: Location.PermissionStatus;
   backgroundPermission: Location.PermissionStatus;
@@ -346,7 +365,11 @@ async function sendNotification(title: string, body: string): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({
       content: { title, body, sound: false },
-      trigger: null,
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 1,
+        channelId: TRIP_NOTIFICATION_CHANNEL,
+      },
     });
   } catch {
     // Notifications are best-effort
@@ -780,8 +803,22 @@ export async function stopTracking(): Promise<void> {
 
 export async function getTrackerState(): Promise<TrackerDiagnostics> {
   const trackingEnabled = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  const [foregroundPermission, backgroundPermission, providerStatus, lastPoint, lastTaskAt, lastSyncAt, token, recentEvents, lastSpeedKmh, lastAccuracyMeters, startCandidateCount, startReason] =
+  const [notificationPermission, availableNotificationChannels, foregroundPermission, backgroundPermission, providerStatus, lastPoint, lastTaskAt, lastSyncAt, token, recentEvents, lastSpeedKmh, lastAccuracyMeters, startCandidateCount, startReason] =
     await Promise.all([
+      Notifications.getPermissionsAsync()
+        .then((result) => result.status)
+        .catch(() => "undetermined" as Notifications.PermissionStatus),
+      Platform.OS === "android"
+        ? Notifications.getNotificationChannelsAsync()
+            .then((channels) =>
+              channels.map((channel) => ({
+                id: channel.id,
+                name: channel.name,
+                importance: channel.importance,
+              }))
+            )
+            .catch(() => [])
+        : Promise.resolve([]),
       Location.getForegroundPermissionsAsync()
         .then((result) => result.status)
         .catch(() => "undetermined" as Location.PermissionStatus),
@@ -806,6 +843,10 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     pendingPoints: (await getPendingPoints()).length,
     trackingEnabled,
     hasToken: Boolean(token),
+    notificationPermission,
+    tripNotificationChannel: TRIP_NOTIFICATION_CHANNEL,
+    backgroundNotificationChannel: BACKGROUND_NOTIFICATION_CHANNEL,
+    availableNotificationChannels,
     locationServicesEnabled: providerStatus?.locationServicesEnabled ?? false,
     foregroundPermission,
     backgroundPermission,
