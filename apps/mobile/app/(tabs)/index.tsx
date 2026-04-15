@@ -256,22 +256,12 @@ export default function TripsScreen() {
               >
                 <Text style={styles.arrowText}>←</Text>
               </TouchableOpacity>
-              <Text style={styles.windowLabel}>{windowLabel}</Text>
-              <TouchableOpacity
-                onPress={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
-                disabled={selectedWeekOffset === 0}
-                activeOpacity={0.7}
-                style={[styles.arrowButton, selectedWeekOffset === 0 && styles.arrowButtonDisabled]}
+              <ScrollView
+                ref={dayTabsRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.dayTabs}
               >
-                <Text style={styles.arrowText}>→</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView
-              ref={dayTabsRef}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.dayTabs}
-            >
               {grouped.map((group) => {
                 const isSelected = selectedGroup ? isSameDay(group.day, selectedGroup.day) : false;
 
@@ -298,7 +288,16 @@ export default function TripsScreen() {
                   </TouchableOpacity>
                 );
               })}
-            </ScrollView>
+              </ScrollView>
+              <TouchableOpacity
+                onPress={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
+                disabled={selectedWeekOffset === 0}
+                activeOpacity={0.7}
+                style={[styles.arrowButton, selectedWeekOffset === 0 && styles.arrowButtonDisabled]}
+              >
+                <Text style={styles.arrowText}>→</Text>
+              </TouchableOpacity>
+            </View>
             {selectedGroup && <Text style={styles.dayHeader}>{formatDayHeader(selectedGroup.day)}</Text>}
           </View>
         ) : null
@@ -336,21 +335,8 @@ const styles = StyleSheet.create({
   paginationRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: 12,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  windowLabel: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#0f172a",
-    textAlign: "center",
-    flex: 1,
+    gap: 4,
   },
   arrowButton: {
     padding: 10,
@@ -369,7 +355,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0f172a",
   },
-  dayTabs: { gap: 10, paddingRight: 16, paddingBottom: 16 },
+  dayTabs: { gap: 10, paddingBottom: 4 },
   dayTab: {
     minWidth: 94,
     backgroundColor: "#fff",
