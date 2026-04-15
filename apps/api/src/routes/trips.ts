@@ -37,15 +37,92 @@ const updateTripSchema = z.object({
 });
 
 const MIN_TRIP_DISTANCE_METERS = 50;
+const MAX_MODE_ACCURACY_METERS = 80;
+const MAX_SEGMENT_GAP_MS = 2 * 60 * 1000;
+const MAX_REASONABLE_SEGMENT_SPEED_KMH = 160;
 
-/** Detect trip mode from GPS route based on 90th-percentile speed */
+function percentile(values: number[], q: number): number {
+  if (values.length === 0) return 0;
+  const index = Math.min(values.length - 1, Math.max(0, Math.floor(values.length * q)));
+  return values[index];
+}
+
+function toKmh(speedMs: number): number {
+  return speedMs * 3.6;
+}
+
+/**
+ * Detect trip mode from route shape.
+ *
+ * We combine device-reported speed with speed derived from GPS segments and then
+ * classify using a few robust statistics instead of a single speed threshold.
+ */
 function detectTripMode(points: GpsPoint[]): "WALK" | "CYCLE" | "EBIKE" | "CAR" | "OTHER" {
   if (points.length < 2) return "WALK";
-  const speeds = points.map((p) => p.speed * 3.6).sort((a, b) => a - b);
-  const p90 = speeds[Math.floor(speeds.length * 0.9)];
-  if (p90 > 40) return "CAR";
-  if (p90 > 18) return "EBIKE";
-  if (p90 > 5) return "CYCLE";
+
+  const usablePoints = points.filter((point) => point.accuracy > 0 && point.accuracy <= MAX_MODE_ACCURACY_METERS);
+  const route = usablePoints.length >= 2 ? usablePoints : points;
+
+  const reportedSpeeds = route
+    .map((point) => toKmh(Math.max(0, point.speed)))
+    .filter((speed) => Number.isFinite(speed) && speed <= MAX_REASONABLE_SEGMENT_SPEED_KMH);
+
+  const segmentSpeeds: number[] = [];
+  let movingSegments = 0;
+  let totalSegments = 0;
+
+  for (let i = 1; i < route.length; i++) {
+    const previous = route[i - 1];
+    const current = route[i];
+    const timeMs = new Date(current.timestamp).getTime() - new Date(previous.timestamp).getTime();
+    if (!Number.isFinite(timeMs) || timeMs <= 0 || timeMs > MAX_SEGMENT_GAP_MS) continue;
+
+    const distanceMeters = haversine(previous, current);
+    const speedKmh = (distanceMeters / (timeMs / 1000)) * 3.6;
+    if (!Number.isFinite(speedKmh) || speedKmh > MAX_REASONABLE_SEGMENT_SPEED_KMH) continue;
+
+    totalSegments += 1;
+    if (speedKmh >= 2.5) movingSegments += 1;
+    segmentSpeeds.push(speedKmh);
+  }
+
+  const speeds = [...reportedSpeeds, ...segmentSpeeds].sort((a, b) => a - b);
+  if (speeds.length === 0) return "OTHER";
+
+  const median = percentile(speeds, 0.5);
+  const p75 = percentile(speeds, 0.75);
+  const p90 = percentile(speeds, 0.9);
+  const max = speeds[speeds.length - 1];
+  const distanceKm = routeDistance(route) / 1000;
+  const movingRatio = totalSegments > 0 ? movingSegments / totalSegments : 0;
+
+  if (
+    p90 >= 36 ||
+    max >= 55 ||
+    (median >= 18 && p75 >= 28) ||
+    (distanceKm >= 3 && median >= 16 && movingRatio >= 0.45)
+  ) {
+    return "CAR";
+  }
+
+  if (
+    p90 >= 22 ||
+    max >= 32 ||
+    (median >= 13 && p75 >= 18) ||
+    (distanceKm >= 2 && median >= 12 && movingRatio >= 0.55)
+  ) {
+    return "EBIKE";
+  }
+
+  if (
+    p90 >= 9 ||
+    max >= 18 ||
+    (median >= 5.5 && p75 >= 8) ||
+    (distanceKm >= 0.8 && median >= 4.5 && movingRatio >= 0.6)
+  ) {
+    return "CYCLE";
+  }
+
   return "WALK";
 }
 
