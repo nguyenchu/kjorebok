@@ -45,6 +45,8 @@ function formatDayHeader(date: Date): string {
 }
 
 function formatDayTabLabel(date: Date): string {
+  if (isToday(date)) return "I dag";
+  if (isYesterday(date)) return "I går";
   return format(date, "EEEE", { locale: nb });
 }
 
@@ -74,8 +76,11 @@ function buildWeekLog(trips: TripSummary[], weekOffset: number): DayLog[] {
     }
   }
 
+  const today = startOfDay(new Date());
+
   return Array.from({ length: 7 }, (_, offset) => {
     const day = addDays(weekStart, offset);
+    if (weekOffset === 0 && day > today) return null;
     const key = format(day, "yyyy-MM-dd");
     const dayTrips = tripsByDay.get(key) ?? [];
     const dayStart = day.getTime();
@@ -87,7 +92,7 @@ function buildWeekLog(trips: TripSummary[], weekOffset: number): DayLog[] {
           null);
 
     return { day, trips: dayTrips, lastKnownAddress };
-  });
+  }).filter((d): d is DayLog => d !== null);
 }
 
 function getMaxWeekOffset(trips: TripSummary[]): number {
@@ -128,6 +133,7 @@ export default function DashboardPage() {
   const androidMetadataUrl = getAndroidMetadataUrl();
   const apiBaseUrl = getApiBaseUrl();
   const dayTabsRef = useRef<HTMLDivElement>(null);
+  const selectLastDayRef = useRef(false);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -233,6 +239,13 @@ export default function DashboardPage() {
     if (dayLog.length === 0) return;
 
     const hasSelectedDay = dayLog.some((day) => format(day.day, "yyyy-MM-dd") === selectedDayKey);
+
+    if (selectLastDayRef.current) {
+      selectLastDayRef.current = false;
+      setSelectedDayKey(format(dayLog[dayLog.length - 1].day, "yyyy-MM-dd"));
+      return;
+    }
+
     if (hasSelectedDay) return;
 
     setSelectedDayKey(
@@ -241,6 +254,36 @@ export default function DashboardPage() {
         : format(dayLog[0].day, "yyyy-MM-dd"),
     );
   }, [dayLog, selectedDayKey, selectedWeekOffset]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (dayLog.length === 0) return;
+      if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
+
+      e.preventDefault();
+
+      const currentIndex = dayLog.findIndex((d) => format(d.day, "yyyy-MM-dd") === selectedDayKey);
+
+      if (e.key === "ArrowLeft") {
+        if (currentIndex > 0) {
+          setSelectedDayKey(format(dayLog[currentIndex - 1].day, "yyyy-MM-dd"));
+        } else if (selectedWeekOffset < maxWeekOffset) {
+          selectLastDayRef.current = true;
+          setSelectedWeekOffset((w) => w + 1);
+        }
+      } else {
+        if (currentIndex < dayLog.length - 1) {
+          setSelectedDayKey(format(dayLog[currentIndex + 1].day, "yyyy-MM-dd"));
+        } else if (selectedWeekOffset > 0) {
+          setSelectedWeekOffset((w) => w - 1);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dayLog, selectedDayKey, selectedWeekOffset, maxWeekOffset]);
 
   if (authLoading) return null;
 
@@ -519,21 +562,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "0.9rem",
-          flexWrap: "wrap",
-          marginBottom: "1rem",
-          padding: "0.9rem 1rem",
-          background: "rgba(255,255,255,0.82)",
-          border: "1px solid var(--border)",
-          borderRadius: "20px",
-          boxShadow: "0 12px 26px rgba(15, 23, 42, 0.05)",
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
         <div>
           <p style={{ color: "var(--text-soft)", fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.2rem" }}>
             Tidsrom
@@ -560,101 +589,113 @@ export default function DashboardPage() {
             Hopp til forrige måned
           </button>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+      </div>
+
+      {dayLog.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
           <button
             type="button"
             onClick={() => setSelectedWeekOffset((current) => Math.min(current + 1, maxWeekOffset))}
             disabled={selectedWeekOffset >= maxWeekOffset}
             style={{
-              padding: "0.5rem 0.85rem",
+              flexShrink: 0,
+              width: "2.2rem",
+              height: "2.2rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               background: "rgba(255,255,255,0.92)",
               border: "1px solid var(--border)",
               borderRadius: "999px",
-              fontSize: "0.84rem",
+              fontSize: "1rem",
               fontWeight: 700,
               color: "var(--text)",
               cursor: selectedWeekOffset >= maxWeekOffset ? "default" : "pointer",
-              opacity: selectedWeekOffset >= maxWeekOffset ? 0.45 : 1,
+              opacity: selectedWeekOffset >= maxWeekOffset ? 0.3 : 1,
             }}
+            aria-label="Eldre uke"
           >
-            Eldre
+            ←
           </button>
+          <div ref={dayTabsRef} style={{ display: "flex", gap: "0.75rem", overflowX: "auto", padding: "0.1rem 0 0.6rem", flex: 1 }}>
+            {dayLog.map((day) => {
+              const selected = selectedDay ? isSameDay(day.day, selectedDay.day) : false;
+
+              return (
+                <button
+                  key={day.day.toISOString()}
+                  type="button"
+                  onClick={() => setSelectedDayKey(format(day.day, "yyyy-MM-dd"))}
+                  style={{
+                    position: "relative",
+                    flex: "0 0 auto",
+                    minWidth: "116px",
+                    textAlign: "left",
+                    border: selected ? "1px solid rgba(15, 23, 42, 0.96)" : "1px solid var(--border)",
+                    borderRadius: "18px",
+                    padding: "0.85rem 0.95rem",
+                    background: selected ? "var(--text)" : "rgba(255,255,255,0.86)",
+                    color: selected ? "#f8fafc" : "var(--text)",
+                    cursor: "pointer",
+                    boxShadow: selected ? "0 18px 36px rgba(15, 23, 42, 0.18)" : "0 12px 26px rgba(15, 23, 42, 0.05)",
+                  }}
+                >
+                  <div style={{ fontSize: "0.98rem", fontWeight: 850, textTransform: "capitalize", marginBottom: "0.15rem" }}>
+                    {formatDayTabLabel(day.day)}
+                  </div>
+                  <div style={{ fontSize: "0.78rem", fontWeight: 700, color: selected ? "#cbd5e1" : "var(--text-muted)" }}>
+                    {formatDayTabMeta(day.day)}
+                  </div>
+                  {day.trips.length > 0 && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "0.55rem",
+                        right: "0.55rem",
+                        minWidth: "1.35rem",
+                        height: "1.35rem",
+                        padding: "0 0.4rem",
+                        borderRadius: "999px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: selected ? "#38bdf8" : "#e0f2fe",
+                        color: selected ? "#082f49" : "#0369a1",
+                        fontSize: "0.72rem",
+                        fontWeight: 850,
+                      }}
+                    >
+                      {day.trips.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
           <button
             type="button"
             onClick={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
             disabled={selectedWeekOffset === 0}
             style={{
-              padding: "0.5rem 0.85rem",
-              background: selectedWeekOffset === 0 ? "rgba(15,23,42,0.12)" : "var(--text)",
+              flexShrink: 0,
+              width: "2.2rem",
+              height: "2.2rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: selectedWeekOffset === 0 ? "rgba(15,23,42,0.08)" : "var(--text)",
               border: "1px solid rgba(15, 23, 42, 0.12)",
               borderRadius: "999px",
-              fontSize: "0.84rem",
+              fontSize: "1rem",
               fontWeight: 700,
               color: selectedWeekOffset === 0 ? "var(--text-soft)" : "#fff",
               cursor: selectedWeekOffset === 0 ? "default" : "pointer",
-              opacity: selectedWeekOffset === 0 ? 0.45 : 1,
+              opacity: selectedWeekOffset === 0 ? 0.3 : 1,
             }}
+            aria-label="Nyere uke"
           >
-            {selectedWeekOffset <= 1 ? "Denne uken" : "Nyere"}
+            →
           </button>
-        </div>
-      </div>
-
-      {dayLog.length > 0 && (
-        <div ref={dayTabsRef} style={{ display: "flex", gap: "0.75rem", overflowX: "auto", padding: "0.1rem 0 1rem", marginBottom: "1rem" }}>
-          {dayLog.map((day) => {
-            const selected = selectedDay ? isSameDay(day.day, selectedDay.day) : false;
-
-            return (
-              <button
-                key={day.day.toISOString()}
-                type="button"
-                onClick={() => setSelectedDayKey(format(day.day, "yyyy-MM-dd"))}
-                style={{
-                  position: "relative",
-                  flex: "0 0 auto",
-                  minWidth: "116px",
-                  textAlign: "left",
-                  border: selected ? "1px solid rgba(15, 23, 42, 0.96)" : "1px solid var(--border)",
-                  borderRadius: "18px",
-                  padding: "0.85rem 0.95rem",
-                  background: selected ? "var(--text)" : "rgba(255,255,255,0.86)",
-                  color: selected ? "#f8fafc" : "var(--text)",
-                  cursor: "pointer",
-                  boxShadow: selected ? "0 18px 36px rgba(15, 23, 42, 0.18)" : "0 12px 26px rgba(15, 23, 42, 0.05)",
-                }}
-              >
-                <div style={{ fontSize: "0.98rem", fontWeight: 850, textTransform: "capitalize", marginBottom: "0.15rem" }}>
-                  {formatDayTabLabel(day.day)}
-                </div>
-                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: selected ? "#cbd5e1" : "var(--text-muted)" }}>
-                  {formatDayTabMeta(day.day)}
-                </div>
-                {day.trips.length > 0 && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: "0.55rem",
-                      right: "0.55rem",
-                      minWidth: "1.35rem",
-                      height: "1.35rem",
-                      padding: "0 0.4rem",
-                      borderRadius: "999px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: selected ? "#38bdf8" : "#e0f2fe",
-                      color: selected ? "#082f49" : "#0369a1",
-                      fontSize: "0.72rem",
-                      fontWeight: 850,
-                    }}
-                  >
-                    {day.trips.length}
-                  </span>
-                )}
-              </button>
-            );
-          })}
         </div>
       )}
 
