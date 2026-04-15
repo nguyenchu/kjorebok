@@ -5,7 +5,23 @@ import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { getAndroidDownloadUrl, getAndroidMetadataUrl, getApiBaseUrl } from "@/lib/config";
-import type { TripPurpose, TripSummary, Trip } from "@kjorebok/shared";
+import type { TripMode, TripPurpose, TripSummary, Trip } from "@kjorebok/shared";
+
+const MODE_ICONS: Record<TripMode, string> = {
+  WALK: "🚶",
+  CYCLE: "🚴",
+  EBIKE: "⚡",
+  CAR: "🚗",
+  OTHER: "📍",
+};
+
+const MODE_LABELS: Record<TripMode, string> = {
+  WALK: "Gåtur",
+  CYCLE: "Sykkeltur",
+  EBIKE: "Elsykkel",
+  CAR: "Kjøretur",
+  OTHER: "Annet",
+};
 
 const TripMap = dynamic(() => import("./TripMap"), { ssr: false });
 import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfMonth, startOfWeek, subMonths } from "date-fns";
@@ -202,6 +218,15 @@ export default function DashboardPage() {
       setTrips((prev) => prev.map((t) => t.id === id ? { ...t, purpose } : t));
     } catch (e: any) {
       alert(e.message ?? "Kunne ikke oppdatere formål.");
+    }
+  };
+
+  const handleMode = async (id: string, mode: TripMode) => {
+    try {
+      await api.patch(`/trips/${id}`, { mode });
+      setTrips((prev) => prev.map((t) => t.id === id ? { ...t, mode } : t));
+    } catch (e: any) {
+      alert(e.message ?? "Kunne ikke oppdatere turtype.");
     }
   };
 
@@ -744,14 +769,20 @@ export default function DashboardPage() {
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.3rem" }}>
-                        {trip.startAddress ?? "Ukjent start"} → {trip.endAddress ?? "Ukjent slutt"}
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.3rem" }}>
+                        <span style={{ fontSize: "1.1rem" }}>{MODE_ICONS[trip.mode ?? "CAR"]}</span>
+                        <span style={{ fontWeight: 700, fontSize: "1rem" }}>
+                          {trip.startAddress ?? "Ukjent start"} → {trip.endAddress ?? "Ukjent slutt"}
+                        </span>
                       </div>
                       <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>
-                        {format(new Date(trip.startedAt), "HH:mm", { locale: nb })} ·{" "}
-                        {formatDuration(trip.startedAt, trip.endedAt)}
+                        {format(new Date(trip.startedAt), "HH:mm", { locale: nb })}
+                        {trip.endedAt && (
+                          <> → {format(new Date(trip.endedAt), "HH:mm", { locale: nb })}</>
+                        )}
+                        {" · "}{formatDuration(trip.startedAt, trip.endedAt)}
                       </div>
-                      <div style={{ display: "flex", gap: "0.35rem" }}>
+                      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
                         {(["PRIVATE", "WORK"] as TripPurpose[]).map((p) => (
                           <button
                             key={p}
@@ -769,6 +800,25 @@ export default function DashboardPage() {
                             }}
                           >
                             {p === "PRIVATE" ? "Privat" : "Jobb"}
+                          </button>
+                        ))}
+                        {(["CAR", "WALK", "CYCLE", "EBIKE", "OTHER"] as TripMode[]).map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => handleMode(trip.id, m)}
+                            style={{
+                              padding: "0.2rem 0.55rem",
+                              borderRadius: "999px",
+                              border: "1px solid",
+                              cursor: "pointer",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              background: (trip.mode ?? "CAR") === m ? "var(--text)" : "transparent",
+                              color: (trip.mode ?? "CAR") === m ? "#f8fafc" : "var(--text-soft)",
+                              borderColor: (trip.mode ?? "CAR") === m ? "var(--text)" : "var(--border)",
+                            }}
+                          >
+                            {MODE_ICONS[m]} {MODE_LABELS[m]}
                           </button>
                         ))}
                       </div>

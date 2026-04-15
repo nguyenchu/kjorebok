@@ -8,6 +8,9 @@ import GoogleAnalytics from "@/lib/GoogleAnalytics";
 export const metadata: Metadata = {
   title: "Kjørebok",
   description: "GPS-basert kjørebok for skattefradrag og kjøregodtgjørelse",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

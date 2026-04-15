@@ -3,7 +3,7 @@ import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, Touchable
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { router } from "expo-router";
 import { api } from "@/lib/api";
-import type { TripPurpose, TripSummary } from "@kjorebok/shared";
+import type { TripMode, TripPurpose, TripSummary } from "@kjorebok/shared";
 import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -103,24 +103,54 @@ function formatWindowRange(groups: DayGroup[]): string {
   return `${format(firstDay, "d. MMM", { locale: nb })}–${format(lastDay, "d. MMM yyyy", { locale: nb })}`;
 }
 
-function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onPress }: { trip: TripSummary; isLast: boolean; onDelete: (id: string) => void; onSetPurpose: (id: string, purpose: TripPurpose) => void; onPress: (id: string) => void }) {
+const MODE_ICONS: Record<TripMode, string> = {
+  WALK: "🚶",
+  CYCLE: "🚴",
+  EBIKE: "⚡",
+  CAR: "🚗",
+  OTHER: "📍",
+};
+
+const MODE_LABELS: Record<TripMode, string> = {
+  WALK: "Gåtur",
+  CYCLE: "Sykkeltur",
+  EBIKE: "Elsykkel",
+  CAR: "Kjøretur",
+  OTHER: "Annet",
+};
+
+const ALL_MODES: TripMode[] = ["CAR", "WALK", "CYCLE", "EBIKE", "OTHER"];
+
+function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onPress }: { trip: TripSummary; isLast: boolean; onDelete: (id: string) => void; onSetPurpose: (id: string, purpose: TripPurpose) => void; onSetMode: (id: string, mode: TripMode) => void; onPress: (id: string) => void }) {
   const isActive = trip.status === "ACTIVE";
-  const time = format(parseISO(trip.startedAt), "HH:mm", { locale: nb });
+  const startTime = format(parseISO(trip.startedAt), "HH:mm", { locale: nb });
+  const endTime = trip.endedAt ? format(parseISO(trip.endedAt), "HH:mm", { locale: nb }) : null;
+  const mode: TripMode = trip.mode ?? "CAR";
 
   const handleLongPress = () => {
     const nextPurpose: TripPurpose = trip.purpose === "PRIVATE" ? "WORK" : "PRIVATE";
-    const nextLabel = nextPurpose === "WORK" ? "Jobb" : "Privat";
-    Alert.alert(trip.purpose === "PRIVATE" ? "Privat tur" : "Jobbreise", undefined, [
-      { text: `Merk som ${nextLabel}`, onPress: () => onSetPurpose(trip.id, nextPurpose) },
-      { text: "Slett tur", style: "destructive", onPress: () => onDelete(trip.id) },
-      { text: "Avbryt", style: "cancel" },
-    ]);
+    const nextPurposeLabel = nextPurpose === "WORK" ? "Jobb" : "Privat";
+    const modeOptions = ALL_MODES.filter((m) => m !== mode).map((m) => ({
+      text: `${MODE_ICONS[m]} ${MODE_LABELS[m]}`,
+      onPress: () => onSetMode(trip.id, m),
+    }));
+    Alert.alert(
+      `${MODE_ICONS[mode]} ${MODE_LABELS[mode]} · ${trip.purpose === "PRIVATE" ? "Privat" : "Jobb"}`,
+      undefined,
+      [
+        { text: `Merk som ${nextPurposeLabel}`, onPress: () => onSetPurpose(trip.id, nextPurpose) },
+        ...modeOptions,
+        { text: "Slett tur", style: "destructive", onPress: () => onDelete(trip.id) },
+        { text: "Avbryt", style: "cancel" },
+      ],
+    );
   };
 
   return (
     <View style={styles.timelineItem}>
       <View style={styles.timelineLeft}>
-        <Text style={styles.timelineTime}>{time}</Text>
+        <Text style={styles.timelineTime}>{startTime}</Text>
+        {endTime && <Text style={styles.timelineTimeEnd}>{endTime}</Text>}
       </View>
       <View style={styles.timelineCenter}>
         <View style={[styles.timelineDot, isActive && styles.timelineDotActive]} />
@@ -128,7 +158,10 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onPress }: { t
       </View>
       <TouchableOpacity style={styles.timelineCard} onPress={() => onPress(trip.id)} onLongPress={handleLongPress} activeOpacity={0.85}>
         <View style={styles.cardHeader}>
-          <Text style={styles.distance}>{formatDistance(trip.distanceMeters)}</Text>
+          <View style={styles.cardHeaderLeft}>
+            <Text style={styles.modeIcon}>{MODE_ICONS[mode]}</Text>
+            <Text style={styles.distance}>{formatDistance(trip.distanceMeters)}</Text>
+          </View>
           {isActive && (
             <View style={styles.activeBadge}>
               <View style={styles.activeBadgeDot} />
@@ -185,6 +218,15 @@ export default function TripsScreen() {
       setTrips((prev) => prev.map((t) => t.id === id ? { ...t, purpose } : t));
     } catch (e: any) {
       Alert.alert("Feil", e.message ?? "Kunne ikke oppdatere formål.");
+    }
+  }, []);
+
+  const handleMode = useCallback(async (id: string, mode: TripMode) => {
+    try {
+      await api.patch(`/trips/${id}`, { mode });
+      setTrips((prev) => prev.map((t) => t.id === id ? { ...t, mode } : t));
+    } catch (e: any) {
+      Alert.alert("Feil", e.message ?? "Kunne ikke oppdatere turtype.");
     }
   }, []);
 
@@ -321,6 +363,7 @@ export default function TripsScreen() {
           isLast={index === selectedTrips.length - 1}
           onDelete={handleDelete}
           onSetPurpose={handlePurpose}
+          onSetMode={handleMode}
           onPress={(id) => router.push(`/trip/${id}`)}
         />
       )}
@@ -415,6 +458,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#94a3b8",
   },
+  timelineTimeEnd: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#cbd5e1",
+    marginTop: 2,
+  },
   timelineCenter: {
     width: 24,
     alignItems: "center",
@@ -466,6 +515,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 6,
+  },
+  cardHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  modeIcon: {
+    fontSize: 16,
   },
   distance: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
   activeBadge: {

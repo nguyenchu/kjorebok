@@ -1,5 +1,6 @@
 export type TripStatus = "ACTIVE" | "COMPLETED";
 export type TripPurpose = "PRIVATE" | "WORK";
+export type TripMode = "WALK" | "CYCLE" | "EBIKE" | "CAR" | "OTHER";
 
 export interface GpsPoint {
   lat: number;
@@ -20,6 +21,7 @@ export interface Trip {
   startAddress: string | null;
   endAddress: string | null;
   purpose: TripPurpose;
+  mode: TripMode;
   route: GpsPoint[];
   createdAt: string;
   updatedAt: string;
@@ -47,4 +49,5 @@ export type TripSummary = Omit<Trip, "route">;
 
 export interface UpdateTripDto {
   purpose?: TripPurpose;
+  mode?: TripMode;
 }

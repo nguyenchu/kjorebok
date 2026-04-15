@@ -27,6 +27,7 @@ model Trip {
   startAddress   String?
   endAddress     String?
   purpose        TripPurpose @default(PRIVATE)
+  mode           TripMode    @default(CAR)
   // Route stored as JSON array of GpsPoint objects
   // For production, consider PostGIS geography(LineString) instead
   route          Json        @default("[]")
@@ -46,4 +47,12 @@ enum TripStatus {
 enum TripPurpose {
   PRIVATE
   WORK
+}
+
+enum TripMode {
+  WALK
+  CYCLE
+  EBIKE
+  CAR
+  OTHER
 }

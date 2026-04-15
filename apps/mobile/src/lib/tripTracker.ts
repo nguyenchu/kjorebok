@@ -13,17 +13,18 @@ import type { GpsPoint } from "@kjorebok/shared";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 
-const START_SPEED_MS = 3 / 3.6;
-const STOP_SPEED_MS = 1 / 3.6;
+const START_SPEED_MS = 2 / 3.6;        // 2 km/h — fanger opp gåturer
+const STOP_SPEED_MS = 0.5 / 3.6;       // 0.5 km/h
 const START_CONFIRM_POINTS = 2;
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 25;
 const MAX_PENDING_POINTS = 500;
 const MAX_START_ACCURACY_METERS = 80;
 const MAX_ROUTE_ACCURACY_METERS = 30;
-const MIN_MOVEMENT_DISTANCE_METERS = 20;
-const MIN_ROUTE_POINT_DISTANCE_METERS = 10;
+const MIN_MOVEMENT_DISTANCE_METERS = 8; // lavere terskel for gåtur-deteksjon
+const MIN_ROUTE_POINT_DISTANCE_METERS = 5; // tettere punkter for gåturer
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 1000;
+const TRIP_NOTIFICATION_CHANNEL = "trips";
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 
@@ -341,6 +342,31 @@ async function flushPendingPoints(tripId: string): Promise<void> {
   }
 }
 
+async function sendNotification(title: string, body: string): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: { title, body, sound: false },
+      trigger: null,
+    });
+  } catch {
+    // Notifications are best-effort
+  }
+}
+
+async function ensureNotificationChannel(): Promise<void> {
+  try {
+    await Notifications.setNotificationChannelAsync(TRIP_NOTIFICATION_CHANNEL, {
+      name: "Turer",
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: null,
+      vibrationPattern: null,
+      enableVibrate: false,
+    });
+  } catch {
+    // Android only — safe to ignore on iOS
+  }
+}
+
 async function startTrip(point: GpsPoint): Promise<boolean> {
   try {
     const startAddress = await reverseGeocode(point);
@@ -358,6 +384,7 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
     await setStartCandidateCount(0);
     await clear(FAST_COUNT_KEY);
     await appendLog("Tur startet automatisk.");
+    await sendNotification("Tur startet", startAddress ? `Fra: ${startAddress}` : "GPS-sporing er aktiv.");
     return true;
   } catch (error) {
     await appendLog(
@@ -388,9 +415,15 @@ async function finishTrip(tripId: string, endPoint: GpsPoint): Promise<void> {
   try {
     await flushPendingPoints(tripId);
     const endAddress = await reverseGeocode(endPoint);
-    await api.post(`/trips/${tripId}/end`, { endPoint, endAddress });
+    const result = await api.post<{ distanceMeters?: number } | null>(`/trips/${tripId}/end`, { endPoint, endAddress });
     await markSyncSuccess();
     await appendLog("Tur fullfort og sendt til server.");
+    // result is null if server deleted the trip (too short)
+    if (result && typeof result.distanceMeters === "number" && result.distanceMeters >= 50) {
+      const km = (result.distanceMeters / 1000).toFixed(1);
+      const addressNote = endAddress ? ` · ${endAddress}` : "";
+      await sendNotification("Tur fullført", `${km} km${addressNote}`);
+    }
   } catch (error) {
     await appendLog(
       `Kunne ikke fullfore tur${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
@@ -605,6 +638,7 @@ export async function requestPermissions(): Promise<boolean> {
 }
 
 export async function ensureTrackingConfigured(): Promise<boolean> {
+  await ensureNotificationChannel();
   const granted = await requestPermissions();
   if (!granted) return false;
 

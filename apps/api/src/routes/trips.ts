@@ -33,7 +33,21 @@ const endTripSchema = z.object({
 
 const updateTripSchema = z.object({
   purpose: z.enum(["PRIVATE", "WORK"]).optional(),
+  mode: z.enum(["WALK", "CYCLE", "EBIKE", "CAR", "OTHER"]).optional(),
 });
+
+const MIN_TRIP_DISTANCE_METERS = 50;
+
+/** Detect trip mode from GPS route based on 90th-percentile speed */
+function detectTripMode(points: GpsPoint[]): "WALK" | "CYCLE" | "EBIKE" | "CAR" | "OTHER" {
+  if (points.length < 2) return "WALK";
+  const speeds = points.map((p) => p.speed * 3.6).sort((a, b) => a - b);
+  const p90 = speeds[Math.floor(speeds.length * 0.9)];
+  if (p90 > 40) return "CAR";
+  if (p90 > 18) return "EBIKE";
+  if (p90 > 5) return "CYCLE";
+  return "WALK";
+}
 
 const STALE_ACTIVE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -115,12 +129,20 @@ async function finalizeStaleActiveTrips(userId: string): Promise<void> {
       continue;
     }
 
+    const distance = routeDistance(route);
+
+    if (distance < MIN_TRIP_DISTANCE_METERS) {
+      await prisma.trip.delete({ where: { id: trip.id } });
+      continue;
+    }
+
     await prisma.trip.update({
       where: { id: trip.id },
       data: {
         status: "COMPLETED",
         endedAt: lastPoint ? new Date(lastPoint.timestamp) : trip.updatedAt,
-        distanceMeters: routeDistance(route),
+        distanceMeters: distance,
+        mode: detectTripMode(route),
       },
     });
   }
@@ -175,7 +197,7 @@ export async function tripRoutes(app: FastifyInstance) {
         id: true, userId: true,
         status: true, startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true,
-        purpose: true, createdAt: true, updatedAt: true,
+        purpose: true, mode: true, createdAt: true, updatedAt: true,
       },
     });
     return reply.send(trips);
@@ -276,6 +298,11 @@ export async function tripRoutes(app: FastifyInstance) {
     const route = appendUniquePoints(parseRoute(trip.route), [body.data.endPoint]);
     const distanceMeters = routeDistance(route);
 
+    if (distanceMeters < MIN_TRIP_DISTANCE_METERS) {
+      await prisma.trip.delete({ where: { id } });
+      return reply.status(204).send();
+    }
+
     const updated = await prisma.trip.update({
       where: { id },
       data: {
@@ -284,6 +311,7 @@ export async function tripRoutes(app: FastifyInstance) {
         status: "COMPLETED",
         endedAt: new Date(body.data.endPoint.timestamp),
         endAddress: body.data.endAddress ?? null,
+        mode: detectTripMode(route),
       },
     });
     return reply.send(updated);
@@ -306,7 +334,7 @@ export async function tripRoutes(app: FastifyInstance) {
         id: true, userId: true,
         status: true, startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true,
-        purpose: true, createdAt: true, updatedAt: true,
+        purpose: true, mode: true, createdAt: true, updatedAt: true,
       },
     });
     return reply.send(updated);
