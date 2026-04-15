@@ -4,7 +4,7 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { router } from "expo-router";
 import { api } from "@/lib/api";
 import type { TripPurpose, TripSummary } from "@kjorebok/shared";
-import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfMonth, startOfWeek, subMonths } from "date-fns";
+import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek } from "date-fns";
 import { nb } from "date-fns/locale";
 
 type DayGroup = {
@@ -43,6 +43,7 @@ function getWeekStart(weekOffset: number): Date {
 
 function buildWeekGroups(trips: TripSummary[], weekOffset: number): DayGroup[] {
   const weekStart = getWeekStart(weekOffset);
+  const today = startOfDay(new Date());
   const groups: Map<string, TripSummary[]> = new Map();
 
   for (const trip of trips) {
@@ -57,6 +58,7 @@ function buildWeekGroups(trips: TripSummary[], weekOffset: number): DayGroup[] {
 
   return Array.from({ length: 7 }, (_, offset) => {
     const day = addDays(weekStart, offset);
+    if (weekOffset === 0 && day > today) return null;
     const key = format(day, "yyyy-MM-dd");
     const dayTrips = groups.get(key) ?? [];
     const dayStart = day.getTime();
@@ -67,7 +69,7 @@ function buildWeekGroups(trips: TripSummary[], weekOffset: number): DayGroup[] {
       trips: dayTrips,
       lastKnownAddress: previousTrip ? getTripAddress(previousTrip) : null,
     };
-  });
+  }).filter((g): g is DayGroup => g !== null);
 }
 
 function getMaxWeekOffset(trips: TripSummary[]): number {
@@ -209,19 +211,6 @@ export default function TripsScreen() {
   const selectedGroup = grouped.find((group) => format(group.day, "yyyy-MM-dd") === selectedDayKey) ?? grouped[0] ?? null;
   const selectedTrips = selectedGroup?.trips ?? [];
   const windowLabel = formatWindowRange(grouped);
-  const currentWeekStart = getWeekStart(0);
-  const displayedWeekStart = getWeekStart(selectedWeekOffset);
-  const previousMonthWeekOffset = Math.min(
-    maxWeekOffset,
-    Math.max(
-      0,
-      differenceInCalendarWeeks(
-        currentWeekStart,
-        startOfWeek(startOfMonth(subMonths(displayedWeekStart, 1)), { weekStartsOn: 1 }),
-        { weekStartsOn: 1 },
-      ),
-    ),
-  );
 
   useEffect(() => {
     if (selectedWeekOffset > maxWeekOffset) {
@@ -259,39 +248,23 @@ export default function TripsScreen() {
         grouped.length > 0 ? (
           <View style={styles.header}>
             <View style={styles.paginationRow}>
-              <View>
-                <Text style={styles.sectionLabel}>Historikk</Text>
-                <Text style={styles.windowLabel}>{windowLabel}</Text>
-                <TouchableOpacity
-                  onPress={() => setSelectedWeekOffset(previousMonthWeekOffset)}
-                  disabled={previousMonthWeekOffset === selectedWeekOffset}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.jumpLink, previousMonthWeekOffset === selectedWeekOffset && styles.jumpLinkDisabled]}>
-                    Hopp til forrige måned
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.paginationButtons}>
-                <TouchableOpacity
-                  style={[styles.navButton, selectedWeekOffset >= maxWeekOffset && styles.navButtonDisabled]}
-                  onPress={() => setSelectedWeekOffset((current) => Math.min(current + 1, maxWeekOffset))}
-                  disabled={selectedWeekOffset >= maxWeekOffset}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.navButtonText}>Eldre</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.navButtonPrimary, selectedWeekOffset === 0 && styles.navButtonDisabled]}
-                  onPress={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
-                  disabled={selectedWeekOffset === 0}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.navButtonPrimaryText}>
-                    {selectedWeekOffset <= 1 ? "Denne uken" : "Nyere"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedWeekOffset((current) => Math.min(current + 1, maxWeekOffset))}
+                disabled={selectedWeekOffset >= maxWeekOffset}
+                activeOpacity={0.7}
+                style={[styles.arrowButton, selectedWeekOffset >= maxWeekOffset && styles.arrowButtonDisabled]}
+              >
+                <Text style={styles.arrowText}>←</Text>
+              </TouchableOpacity>
+              <Text style={styles.windowLabel}>{windowLabel}</Text>
+              <TouchableOpacity
+                onPress={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
+                disabled={selectedWeekOffset === 0}
+                activeOpacity={0.7}
+                style={[styles.arrowButton, selectedWeekOffset === 0 && styles.arrowButtonDisabled]}
+              >
+                <Text style={styles.arrowText}>→</Text>
+              </TouchableOpacity>
             </View>
             <ScrollView
               ref={dayTabsRef}
@@ -361,75 +334,40 @@ const styles = StyleSheet.create({
   list: { padding: 16, paddingBottom: 32 },
   header: { marginBottom: 16 },
   paginationRow: {
-    flexDirection: "column",
-    alignItems: "stretch",
-    gap: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: 12,
     backgroundColor: "#fff",
     borderRadius: 16,
-    padding: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#64748b",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    marginBottom: 4,
   },
   windowLabel: {
     fontSize: 15,
     fontWeight: "800",
     color: "#0f172a",
+    textAlign: "center",
+    flex: 1,
   },
-  jumpLink: {
-    marginTop: 6,
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#2563eb",
-  },
-  jumpLinkDisabled: {
-    color: "#94a3b8",
-  },
-  paginationButtons: {
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-    justifyContent: "flex-start",
-  },
-  navButton: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+  arrowButton: {
+    padding: 10,
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxWidth: "100%",
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 40,
+    height: 40,
   },
-  navButtonDisabled: {
-    opacity: 0.45,
+  arrowButtonDisabled: {
+    opacity: 0.3,
   },
-  navButtonText: {
-    fontSize: 13,
+  arrowText: {
+    fontSize: 18,
     fontWeight: "700",
     color: "#0f172a",
-  },
-  navButtonPrimary: {
-    backgroundColor: "#0f172a",
-    borderWidth: 1,
-    borderColor: "#0f172a",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxWidth: "100%",
-  },
-  navButtonPrimaryText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#fff",
-    flexShrink: 1,
   },
   dayTabs: { gap: 10, paddingRight: 16, paddingBottom: 16 },
   dayTab: {
