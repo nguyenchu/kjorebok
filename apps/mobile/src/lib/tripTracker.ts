@@ -14,17 +14,20 @@ import type { GpsPoint } from "@kjorebok/shared";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 
-const START_SPEED_MS = 2 / 3.6;        // 2 km/h — fanger opp gåturer
-const STOP_SPEED_MS = 0.5 / 3.6;       // 0.5 km/h
-const START_CONFIRM_POINTS = 2;
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 25;
 const MAX_PENDING_POINTS = 500;
-const MAX_START_ACCURACY_METERS = 80;
+const MAX_USABLE_ACCURACY_METERS = 40;
 const MAX_ROUTE_ACCURACY_METERS = 30;
-const MIN_MOVEMENT_DISTANCE_METERS = 8; // lavere terskel for gåtur-deteksjon
-const MIN_ROUTE_POINT_DISTANCE_METERS = 5; // tettere punkter for gåturer
-const MAX_SAMPLE_AGE_MS = 2 * 60 * 1000;
+const MIN_ROUTE_POINT_DISTANCE_METERS = 5;
+// Windowed motion detection constants
+const MOVEMENT_WINDOW_MS = 60 * 1000;
+const STATIONARY_WINDOW_MS = 30 * 1000;
+const SUSTAINED_MIN_AGE_MS = 30 * 1000;
+const SUSTAINED_MOVE_DISTANCE_METERS = 30;
+const STATIONARY_MAX_SPREAD_METERS = 15;
+const DEFINITIVE_MOVING_SPEED_MS = 15 / 3.6;
+const POSITION_WINDOW_MAX_SAMPLES = 60;
 const TRIP_NOTIFICATION_CHANNEL = "trips";
 const BACKGROUND_NOTIFICATION_CHANNEL = "no.kjorebok.app:kjorebok-background-location";
 
@@ -32,11 +35,10 @@ type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 
 const STATE_KEY = "tracker_state";
 const ACTIVE_TRIP_KEY = "tracker_active_trip_id";
-const FAST_COUNT_KEY = "tracker_fast_count";
 const STOP_TIME_KEY = "tracker_stop_time";
 const PENDING_POINTS_KEY = "tracker_pending_points";
 const LAST_POINT_KEY = "tracker_last_point";
-const LAST_SAMPLE_KEY = "tracker_last_sample";
+const POSITION_WINDOW_KEY = "tracker_position_window";
 const LAST_TASK_AT_KEY = "tracker_last_task_at";
 const LAST_SYNC_AT_KEY = "tracker_last_sync_at";
 const LOG_ENTRIES_KEY = "tracker_log_entries";
@@ -176,26 +178,22 @@ async function setLastPoint(point: GpsPoint): Promise<void> {
   await set(LAST_POINT_KEY, JSON.stringify(point));
 }
 
-async function getLastSample(): Promise<GpsPoint | null> {
-  const raw = await get(LAST_SAMPLE_KEY);
-  if (!raw) return null;
+type PositionSample = { lat: number; lng: number; timestamp: string };
+
+async function getPositionWindow(): Promise<PositionSample[]> {
+  const raw = await get(POSITION_WINDOW_KEY);
+  if (!raw) return [];
 
   try {
-    const parsed = JSON.parse(raw) as GpsPoint;
-    if (
-      typeof parsed?.lat === "number" &&
-      typeof parsed?.lng === "number" &&
-      typeof parsed?.timestamp === "string"
-    ) {
-      return parsed;
-    }
-  } catch {}
-
-  return null;
+    const parsed = JSON.parse(raw) as PositionSample[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
-async function setLastSample(point: GpsPoint): Promise<void> {
-  await set(LAST_SAMPLE_KEY, JSON.stringify(point));
+async function setPositionWindow(samples: PositionSample[]): Promise<void> {
+  await set(POSITION_WINDOW_KEY, JSON.stringify(samples.slice(-POSITION_WINDOW_MAX_SAMPLES)));
 }
 
 async function setStartReason(reason: string): Promise<void> {
@@ -248,26 +246,81 @@ function haversineMeters(a: GpsPoint, b: GpsPoint): number {
 }
 
 function isUsableAccuracy(point: GpsPoint): boolean {
-  return point.accuracy > 0 && point.accuracy <= MAX_START_ACCURACY_METERS;
+  return point.accuracy > 0 && point.accuracy <= MAX_USABLE_ACCURACY_METERS;
 }
 
-async function detectMovement(point: GpsPoint): Promise<boolean> {
-  if (point.speed > START_SPEED_MS) {
-    return true;
+function haversineLatLng(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  return haversineMeters(a as GpsPoint, b as GpsPoint);
+}
+
+function sampleAgeMs(samples: PositionSample[]): number {
+  if (samples.length < 2) return 0;
+  const first = new Date(samples[0].timestamp).getTime();
+  const last = new Date(samples[samples.length - 1].timestamp).getTime();
+  return Math.max(0, last - first);
+}
+
+function samplesInLastMs(samples: PositionSample[], windowMs: number, nowMs: number): PositionSample[] {
+  const cutoff = nowMs - windowMs;
+  return samples.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
+}
+
+function maxSpreadMeters(samples: PositionSample[]): number {
+  if (samples.length < 2) return 0;
+  let max = 0;
+  for (let i = 0; i < samples.length; i++) {
+    for (let j = i + 1; j < samples.length; j++) {
+      const d = haversineLatLng(samples[i], samples[j]);
+      if (d > max) max = d;
+    }
+  }
+  return max;
+}
+
+async function recordPositionSample(point: GpsPoint, nowMs: number): Promise<PositionSample[]> {
+  const window = await getPositionWindow();
+  const cutoff = nowMs - MOVEMENT_WINDOW_MS;
+  const pruned = window.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
+
+  if (isUsableAccuracy(point)) {
+    pruned.push({ lat: point.lat, lng: point.lng, timestamp: point.timestamp });
   }
 
-  const previous = await getLastSample();
-  if (!previous) return false;
-
-  const age = Math.abs(new Date(point.timestamp).getTime() - new Date(previous.timestamp).getTime());
-  if (age > MAX_SAMPLE_AGE_MS) return false;
-  if (!isUsableAccuracy(point) || !isUsableAccuracy(previous)) return false;
-
-  return haversineMeters(previous, point) >= MIN_MOVEMENT_DISTANCE_METERS;
+  if (pruned.length !== window.length || isUsableAccuracy(point)) {
+    await setPositionWindow(pruned);
+  }
+  return pruned;
 }
 
-async function storeLocationSample(point: GpsPoint): Promise<void> {
-  await setLastSample(point);
+type MotionAssessment = {
+  isMoving: boolean;
+  isStationary: boolean;
+};
+
+function evaluateMotion(point: GpsPoint, window: PositionSample[], nowMs: number): MotionAssessment {
+  const age = sampleAgeMs(window);
+  const netDisp = window.length >= 2
+    ? haversineLatLng(window[0], window[window.length - 1])
+    : 0;
+
+  const fastPathMoving = point.speed >= DEFINITIVE_MOVING_SPEED_MS;
+  const windowMoving = age >= SUSTAINED_MIN_AGE_MS && netDisp >= SUSTAINED_MOVE_DISTANCE_METERS;
+
+  const recent = samplesInLastMs(window, STATIONARY_WINDOW_MS, nowMs);
+  const recentAge = sampleAgeMs(recent);
+  const spread = maxSpreadMeters(recent);
+  const isStationary =
+    recentAge >= SUSTAINED_MIN_AGE_MS &&
+    spread < STATIONARY_MAX_SPREAD_METERS &&
+    point.speed < DEFINITIVE_MOVING_SPEED_MS;
+
+  return {
+    isMoving: fastPathMoving || windowMoving,
+    isStationary,
+  };
+}
+
+async function storeLocationTelemetry(point: GpsPoint): Promise<void> {
   await setLastTelemetry(point);
   await markTaskHeartbeat(point.timestamp);
 }
@@ -377,6 +430,8 @@ async function sendNotification(title: string, body: string): Promise<void> {
 }
 
 async function ensureNotificationChannel(): Promise<void> {
+  if (Platform.OS !== "android") return;
+
   try {
     await Notifications.setNotificationChannelAsync(TRIP_NOTIFICATION_CHANNEL, {
       name: "Turer",
@@ -385,8 +440,20 @@ async function ensureNotificationChannel(): Promise<void> {
       vibrationPattern: [0, 250, 150, 250],
       enableVibrate: true,
     });
+    // Pre-create the foreground-service channel so expo-location attaches its
+    // persistent notification to a visible channel instead of the silent
+    // IMPORTANCE_LOW one it would otherwise create on first start.
+    await Notifications.setNotificationChannelAsync(BACKGROUND_NOTIFICATION_CHANNEL, {
+      name: "Bakgrunnssporing",
+      description: "Viser når Kjørebok følger med på posisjon i bakgrunnen.",
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: null,
+      enableVibrate: false,
+      showBadge: false,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
   } catch {
-    // Android only — safe to ignore on iOS
+    // Safe to ignore — channel creation is best-effort
   }
 }
 
@@ -405,7 +472,6 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
     await set(STATE_KEY, "RECORDING");
     await setStartReason("Tur er aktiv.");
     await setStartCandidateCount(0);
-    await clear(FAST_COUNT_KEY);
     await appendLog("Tur startet automatisk.");
     await sendNotification("Tur startet", startAddress ? `Fra: ${startAddress}` : "GPS-sporing er aktiv.");
     return true;
@@ -417,7 +483,6 @@ async function startTrip(point: GpsPoint): Promise<boolean> {
     await set(STATE_KEY, "IDLE");
     await setStartReason("Kunne ikke starte tur automatisk.");
     await setStartCandidateCount(0);
-    await clear(FAST_COUNT_KEY);
     return false;
   }
 }
@@ -427,7 +492,7 @@ async function resetActiveTripState(): Promise<void> {
   await clear(ACTIVE_TRIP_KEY);
   await clear(STOP_TIME_KEY);
   await clear(LAST_POINT_KEY);
-  await clear(LAST_SAMPLE_KEY);
+  await clear(POSITION_WINDOW_KEY);
   await clear(START_FAIL_COUNT_KEY);
   await setStartCandidateCount(0);
   await setStartReason("Telefonen venter på tydelig bevegelse.");
@@ -485,50 +550,44 @@ async function closeStaleTrip(referenceTimestamp: number): Promise<boolean> {
 
 async function handleLocation(loc: Location.LocationObject): Promise<void> {
   const point = toGpsPoint(loc);
-  const speed = point.speed;
-  const moving = await detectMovement(point);
+  const nowMs = loc.timestamp;
   const hasGoodAccuracy = isUsableAccuracy(point);
+  const window = await recordPositionSample(point, nowMs);
+  const motion = evaluateMotion(point, window, nowMs);
 
-  await storeLocationSample(point);
-  await closeStaleTrip(loc.timestamp);
+  await storeLocationTelemetry(point);
+  await closeStaleTrip(nowMs);
   const state = ((await get(STATE_KEY)) ?? "IDLE") as TrackerState;
 
   switch (state) {
     case "IDLE": {
-      if (moving && hasGoodAccuracy) {
-        await set(STATE_KEY, "DETECTING_START");
-        await set(FAST_COUNT_KEY, "1");
-        await setStartCandidateCount(1);
-        await setStartReason("Oppdaget bevegelse. Venter på en bekreftelse til før tur starter.");
-        await appendLog("Oppdaget bevegelse som kan starte tur.");
-      } else if (!hasGoodAccuracy) {
+      if (!hasGoodAccuracy) {
         await setStartReason(`Venter på bedre GPS-nøyaktighet. Siste måling var ${Math.round(point.accuracy)} meter.`);
+        break;
+      }
+      if (motion.isMoving) {
+        await set(STATE_KEY, "DETECTING_START");
+        await setStartCandidateCount(1);
+        await setStartReason("Oppdaget bevegelse. Bekrefter med ett punkt til før turen starter.");
+        await appendLog("Oppdaget bevegelse som kan starte tur.");
       } else {
-        await setStartReason("Venter på litt mer stabil bevegelse før tur starter automatisk.");
+        await setStartReason("Venter på tydelig bevegelse før tur starter automatisk.");
       }
       break;
     }
 
     case "DETECTING_START": {
-      if (moving && hasGoodAccuracy) {
-        await clear(START_FAIL_COUNT_KEY);
-        const count = Number((await get(FAST_COUNT_KEY)) ?? "0") + 1;
-        await setStartCandidateCount(count);
-        if (count >= START_CONFIRM_POINTS) {
-          await startTrip(point);
-        } else {
-          await set(FAST_COUNT_KEY, String(count));
-          await setStartReason("Bevegelsen ser lovende ut. Trenger ett punkt til for å starte tur.");
-        }
-      } else if (!hasGoodAccuracy) {
-        // Poor GPS accuracy — wait patiently, do not count as a movement failure.
+      if (!hasGoodAccuracy) {
         await setStartReason(`Venter på bedre GPS-nøyaktighet (${Math.round(point.accuracy)} m) før tur kan starte.`);
+        break;
+      }
+      if (motion.isMoving) {
+        await clear(START_FAIL_COUNT_KEY);
+        await startTrip(point);
       } else {
-        // Good accuracy but no movement detected — user may have stopped.
         const failCount = Number((await get(START_FAIL_COUNT_KEY)) ?? "0") + 1;
         if (failCount >= MAX_START_FAIL_COUNT) {
           await clear(START_FAIL_COUNT_KEY);
-          await clear(FAST_COUNT_KEY);
           await set(STATE_KEY, "IDLE");
           await setStartCandidateCount(0);
           await setStartReason("Turstart ble avbrutt fordi bevegelsen stoppet opp igjen.");
@@ -557,9 +616,9 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
         );
       });
 
-      if (speed < STOP_SPEED_MS && hasGoodAccuracy) {
+      if (motion.isStationary) {
         await set(STATE_KEY, "DETECTING_STOP");
-        await set(STOP_TIME_KEY, String(loc.timestamp));
+        await set(STOP_TIME_KEY, String(nowMs));
         await setStartReason("Tur ser ut til å nærme seg stopp.");
         await appendLog("Mulig turstopp oppdaget.");
       } else {
@@ -578,7 +637,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
       await enqueuePoint(point);
 
-      if (moving && hasGoodAccuracy) {
+      if (motion.isMoving && hasGoodAccuracy) {
         await set(STATE_KEY, "RECORDING");
         await clear(STOP_TIME_KEY);
         await flushPendingPoints(tripId).catch(async (error) => {
@@ -593,7 +652,7 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
       }
 
       const stopTime = Number((await get(STOP_TIME_KEY)) ?? "0");
-      if (loc.timestamp - stopTime >= STOP_CONFIRM_MS) {
+      if (nowMs - stopTime >= STOP_CONFIRM_MS) {
         await finishTrip(tripId, point);
       }
       break;
@@ -746,7 +805,6 @@ export async function startTripManually(): Promise<void> {
     throw new Error("Kunne ikke starte tur manuelt.");
   }
 
-  await setLastSample(point);
   await setLastTelemetry(point);
   await setStartReason("Tur startet manuelt og registreres nå.");
   await appendLog("Tur startet manuelt.");
@@ -788,11 +846,10 @@ export async function stopTracking(): Promise<void> {
 
   await clear(STATE_KEY);
   await clear(ACTIVE_TRIP_KEY);
-  await clear(FAST_COUNT_KEY);
   await clear(STOP_TIME_KEY);
   await clear(PENDING_POINTS_KEY);
   await clear(LAST_POINT_KEY);
-  await clear(LAST_SAMPLE_KEY);
+  await clear(POSITION_WINDOW_KEY);
   await clear(LAST_SPEED_KEY);
   await clear(LAST_ACCURACY_KEY);
   await clear(START_CANDIDATE_COUNT_KEY);
