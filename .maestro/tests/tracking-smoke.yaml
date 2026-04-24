@@ -1,0 +1,10 @@
+appId: no.kjorebok.app
+---
+- runFlow:
+    file: ../flows/login.yaml
+- tapOn: "Sporing"
+- assertVisible: "Status for automatisk turstart"
+- assertVisible: "Åpne feilsøking"
+- tapOn: "Åpne feilsøking"
+- assertVisible: "Feilsøking"
+- assertVisible: "Posisjonstjenester"

@@ -2,14 +2,12 @@ import { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useAuth } from "@/lib/auth";
-import { getApiBaseUrl } from "@/lib/api";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
 
 export default function ProfileScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const { user, logout, deleteAccount } = useAuth();
-  const apiBaseUrl = getApiBaseUrl();
   const [deleting, setDeleting] = useState(false);
 
   const confirmDeleteAccount = () => {
@@ -75,11 +73,6 @@ export default function ProfileScreen() {
               : "Ukjent"}
           </Text>
         </View>
-        <View style={styles.separator} />
-        <View style={styles.row}>
-          <Text style={styles.rowLabel}>API</Text>
-          <Text style={styles.apiValue}>{apiBaseUrl}</Text>
-        </View>
       </View>
 
       <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.8}>
@@ -136,7 +129,6 @@ const styles = StyleSheet.create({
   },
   rowLabel: { fontSize: 15, color: "#64748b" },
   rowValue: { fontSize: 15, fontWeight: "600", color: "#0f172a" },
-  apiValue: { fontSize: 13, fontWeight: "600", color: "#0f172a", flex: 1, textAlign: "right" },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: "#e2e8f0" },
   logoutButton: {
     backgroundColor: "#fff",

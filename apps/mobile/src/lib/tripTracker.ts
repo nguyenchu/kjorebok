@@ -414,6 +414,10 @@ async function flushPendingPoints(tripId: string): Promise<void> {
   }
 }
 
+function isMissingActiveTripError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Active trip not found";
+}
+
 async function sendNotification(title: string, body: string): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({
@@ -513,6 +517,10 @@ async function finishTrip(tripId: string, endPoint: GpsPoint): Promise<void> {
       await sendNotification("Tur fullført", `${km} km${addressNote}`);
     }
   } catch (error) {
+    if (isMissingActiveTripError(error)) {
+      await appendLog("Aktiv tur fantes ikke lenger på serveren. Lokal turstatus ble nullstilt.", "warn");
+      return;
+    }
     await appendLog(
       `Kunne ikke fullfore tur${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
       "error"
@@ -610,6 +618,11 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
 
       await enqueuePoint(point);
       await flushPendingPoints(tripId).catch(async (error) => {
+        if (isMissingActiveTripError(error)) {
+          await appendLog("Serveren manglet aktiv tur. Nullstilte lokal turstatus.", "warn");
+          await resetActiveTripState();
+          return;
+        }
         await appendLog(
           `Kunne ikke sende punkter${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
           "error"
@@ -641,6 +654,11 @@ async function handleLocation(loc: Location.LocationObject): Promise<void> {
         await set(STATE_KEY, "RECORDING");
         await clear(STOP_TIME_KEY);
         await flushPendingPoints(tripId).catch(async (error) => {
+          if (isMissingActiveTripError(error)) {
+            await appendLog("Serveren manglet aktiv tur etter stopp. Nullstilte lokal turstatus.", "warn");
+            await resetActiveTripState();
+            return;
+          }
           await appendLog(
             `Kunne ikke sende punkter etter stopp${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
             "error"
@@ -775,6 +793,11 @@ export async function syncActiveTrip(): Promise<void> {
     await flushPendingPoints(tripId);
     await appendLog("Manuell synkronisering fullfort.");
   } catch (error) {
+    if (isMissingActiveTripError(error)) {
+      await appendLog("Aktiv tur fantes ikke lenger på serveren. Lokal turstatus ble nullstilt.", "warn");
+      await resetActiveTripState();
+      return;
+    }
     await appendLog(
       `Manuell synkronisering feilet${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
       "error"

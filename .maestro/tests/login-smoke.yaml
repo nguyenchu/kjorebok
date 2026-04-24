@@ -1,0 +1,6 @@
+appId: no.kjorebok.app
+---
+- runFlow:
+    file: ../flows/login.yaml
+- assertVisible: "Sporing"
+- assertVisible: "Profil"

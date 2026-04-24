@@ -1,0 +1,11 @@
+appId: no.kjorebok.app
+---
+- runFlow:
+    file: ../flows/login.yaml
+- tapOn: "Profil"
+- assertVisible: "Logg ut"
+- tapOn: "Slett konto"
+- assertVisible: "Kontoen din og alle registrerte turer blir slettet permanent. Dette kan ikke angres."
+- assertVisible: "Avbryt"
+- tapOn: "Avbryt"
+- assertVisible: "Slett konto"

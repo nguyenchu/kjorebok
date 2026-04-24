@@ -9,6 +9,7 @@
     "dev:mobile:device": "corepack pnpm --filter @kjorebok/mobile android:device:server",
     "build": "turbo build",
     "lint": "turbo lint",
+    "test:mobile:maestro": "maestro test .maestro/tests",
     "db:start": "docker compose up -d",
     "db:stop": "docker compose down",
     "db:migrate": "turbo db:migrate",

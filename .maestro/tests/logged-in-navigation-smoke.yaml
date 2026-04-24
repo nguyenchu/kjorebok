@@ -1,0 +1,28 @@
+appId: no.kjorebok.app
+---
+- launchApp
+- runFlow:
+    when:
+      visible: "Automatisk turregistrering"
+    file: ../flows/dismiss-tracking-rationale.yaml
+- tapOn: "Sporing"
+- assertVisible: "Status for automatisk turstart"
+- tapOn: "Profil"
+- assertVisible: "Logg ut"
+- assertVisible: "Slett konto"
+- tapOn: "Slett konto"
+- assertVisible: "Kontoen din og alle registrerte turer blir slettet permanent. Dette kan ikke angres."
+- tapOn: "Avbryt"
+- tapOn: "Turer"
+- assertVisible: "Turer"
+- tapOn: "Sporing"
+- runFlow:
+    when:
+      visible: "Åpne feilsøking"
+    commands:
+      - assertVisible: "Åpne feilsøking"
+- runFlow:
+    when:
+      visible: "Skjul feilsøking"
+    commands:
+      - assertVisible: "Skjul feilsøking"

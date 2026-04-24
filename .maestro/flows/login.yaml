@@ -1,0 +1,17 @@
+appId: no.kjorebok.app
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Kjørebok"
+- assertVisible: "Logg inn for å fortsette"
+- tapOn: "E-post"
+- inputText: ${MAESTRO_TEST_EMAIL}
+- tapOn: "Passord"
+- inputText: ${MAESTRO_TEST_PASSWORD}
+- hideKeyboard
+- tapOn: "Logg inn"
+- assertVisible: "Turer"
+- runFlow:
+    when:
+      visible: "Automatisk turregistrering"
+    file: ../flows/dismiss-tracking-rationale.yaml
