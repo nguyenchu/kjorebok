@@ -461,6 +461,19 @@ async function ensureNotificationChannel(): Promise<void> {
   }
 }
 
+async function startBackgroundLocationUpdates(): Promise<void> {
+  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+    accuracy: Location.Accuracy.High,
+    timeInterval: 3000,
+    distanceInterval: 10,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: "Kjørebok",
+      notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
+    },
+  });
+}
+
 async function startTrip(point: GpsPoint): Promise<boolean> {
   try {
     const startAddress = await reverseGeocode(point);
@@ -750,21 +763,19 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
 
   const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
   if (!isRunning) {
-    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-      accuracy: Location.Accuracy.High,
-      timeInterval: 3000,
-      distanceInterval: 10,
-      showsBackgroundLocationIndicator: true,
-      foregroundService: {
-        notificationTitle: "Kjørebok",
-        notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
-      },
-    });
+    await startBackgroundLocationUpdates();
     await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
     await appendLog("Bakgrunnssporing ble startet.");
   } else {
-    await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
-    await appendLog("Bakgrunnssporing er allerede aktiv.");
+    if (Platform.OS === "android") {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
+      await startBackgroundLocationUpdates();
+      await setStartReason("Bakgrunnssporing ble startet på nytt. Telefonen følger med etter ny tur.");
+      await appendLog("Bakgrunnssporing ble startet på nytt for å gjenopprette bakgrunnsvarsel.");
+    } else {
+      await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
+      await appendLog("Bakgrunnssporing er allerede aktiv.");
+    }
   }
 
   await closeStaleTrip(Date.now()).catch(() => {});

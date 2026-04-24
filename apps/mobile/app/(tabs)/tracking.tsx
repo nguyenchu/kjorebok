@@ -166,6 +166,13 @@ export default function TrackingScreen() {
       };
     }
 
+    if (taskSeemsStale) {
+      return {
+        label: "Start sporing på nytt",
+        onPress: handleEnable,
+      };
+    }
+
     if (pendingPoints > 0 || activeTripId) {
       return {
         label: "Send ventende data",
@@ -174,10 +181,10 @@ export default function TrackingScreen() {
     }
 
     return {
-        label: "Oppdater nå",
-        onPress: refresh,
-      };
-  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, tracking]);
+      label: "Oppdater nå",
+      onPress: refresh,
+    };
+  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, taskSeemsStale, tracking]);
 
   const stateLabel: Record<string, string> = {
     IDLE: "Venter på bevegelse",
