@@ -51,4 +51,18 @@ export async function authRoutes(app: FastifyInstance) {
       token,
     });
   });
+
+  const auth = { onRequest: [(app as any).authenticate] };
+
+  app.delete("/auth/me", auth, async (request, reply) => {
+    const userId = (request.user as any).sub as string;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+
+    if (!user) {
+      return reply.status(404).send({ error: "User not found" });
+    }
+
+    await prisma.user.delete({ where: { id: userId } });
+    return reply.status(204).send();
+  });
 }

@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl, getAndroidMetadataUrl, getApiBaseUrl } from "@/lib/config";
+import { getAndroidDownloadUrl, getAndroidMetadataUrl } from "@/lib/config";
 
 type Mode = "login" | "register";
 type AndroidReleaseMetadata = {
@@ -16,7 +17,6 @@ export default function LoginPage() {
   const router = useRouter();
   const androidDownloadUrl = getAndroidDownloadUrl();
   const androidMetadataUrl = getAndroidMetadataUrl();
-  const apiBaseUrl = getApiBaseUrl();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -93,9 +93,6 @@ export default function LoginPage() {
         <p style={{ textAlign: "center", color: "var(--text-muted)", marginBottom: "2rem" }}>
           {mode === "login" ? "Logg inn for å fortsette" : "Opprett ny konto"}
         </p>
-        <p style={{ textAlign: "center", color: "var(--text-soft)", fontSize: "0.82rem", marginBottom: "1rem" }}>
-          API: {apiBaseUrl}
-        </p>
 
         <form onSubmit={submit} style={{
           background: "var(--surface)", border: "1px solid var(--border)",
@@ -147,6 +144,12 @@ export default function LoginPage() {
         >
           {mode === "login" ? "Har du ikke konto? Registrer deg" : "Har du allerede konto? Logg inn"}
         </button>
+
+        <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "1rem" }}>
+          <Link href="/privacy" style={{ color: "var(--primary)", fontWeight: 700 }}>
+            Les personvernerklæringen
+          </Link>
+        </p>
 
         <div
           style={{

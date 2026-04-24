@@ -2,6 +2,8 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+import groovy.json.JsonSlurper
+
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
 /**
@@ -80,9 +82,17 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
  * this variant is about 6MiB larger per architecture than default.
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+def appJson = new JsonSlurper().parse(file("../../app.json"))
+def configuredVersionCode = appJson.expo.android.versionCode
+def configuredVersionName = appJson.expo.version
 def envVersionCode = System.getenv("ANDROID_VERSION_CODE")
-def resolvedVersionCode = envVersionCode != null && envVersionCode.isInteger() ? envVersionCode.toInteger() : 1
-def resolvedVersionName = System.getenv("APP_VERSION") ?: "1.0.0"
+def resolvedVersionCode = envVersionCode != null && envVersionCode.isInteger() ? envVersionCode.toInteger() : configuredVersionCode
+def resolvedVersionName = System.getenv("APP_VERSION") ?: configuredVersionName
+def hasInjectedReleaseSigning =
+    project.hasProperty("android.injected.signing.store.file") &&
+    project.hasProperty("android.injected.signing.store.password") &&
+    project.hasProperty("android.injected.signing.key.alias") &&
+    project.hasProperty("android.injected.signing.key.password")
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -107,15 +117,23 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (hasInjectedReleaseSigning) {
+            release {
+                storeFile file(project.property("android.injected.signing.store.file"))
+                storePassword project.property("android.injected.signing.store.password")
+                keyAlias project.property("android.injected.signing.key.alias")
+                keyPassword project.property("android.injected.signing.key.password")
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            if (hasInjectedReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

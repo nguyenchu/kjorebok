@@ -40,11 +40,6 @@ export default function TrackingScreen() {
   const [pendingPoints, setPendingPoints] = useState(0);
   const [hasToken, setHasToken] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState("undetermined");
-  const [tripNotificationChannel, setTripNotificationChannel] = useState("trips");
-  const [backgroundNotificationChannel, setBackgroundNotificationChannel] = useState("no.kjorebok.app:kjorebok-background-location");
-  const [availableNotificationChannels, setAvailableNotificationChannels] = useState<
-    Array<{ id: string; name: string | null; importance: number }>
-  >([]);
   const [locationServicesEnabled, setLocationServicesEnabled] = useState(false);
   const [foregroundPermission, setForegroundPermission] = useState("undetermined");
   const [backgroundPermission, setBackgroundPermission] = useState("undetermined");
@@ -68,9 +63,6 @@ export default function TrackingScreen() {
     setPendingPoints(tracker.pendingPoints);
     setHasToken(tracker.hasToken);
     setNotificationPermission(tracker.notificationPermission);
-    setTripNotificationChannel(tracker.tripNotificationChannel);
-    setBackgroundNotificationChannel(tracker.backgroundNotificationChannel);
-    setAvailableNotificationChannels(tracker.availableNotificationChannels);
     setLocationServicesEnabled(tracker.locationServicesEnabled);
     setForegroundPermission(tracker.foregroundPermission);
     setBackgroundPermission(tracker.backgroundPermission);
@@ -118,33 +110,33 @@ export default function TrackingScreen() {
   const taskSeemsStale = tracking && isOlderThan(lastTaskAt, 20 * 60 * 1000);
   const needsAttention = !hasToken || !locationServicesEnabled || needsPermission || !tracking || taskSeemsStale;
   const headline = useMemo(() => {
-    if (!hasToken) return "Du er ikke innlogget";
+    if (!hasToken) return "Du må logge inn";
     if (!locationServicesEnabled) return "Skru på posisjonstjenester";
-    if (needsPermission) return "Gi appen bakgrunnslokasjon";
-    if (!tracking) return "Aktiver bakgrunnssporing";
-    if (taskSeemsStale) return "Venter på ny bakgrunnsoppdatering";
+    if (needsPermission) return "Gi tilgang til lokasjon";
+    if (!tracking) return "Aktiver automatisk sporing";
+    if (taskSeemsStale) return "Sporingen trenger oppmerksomhet";
     if (state === "RECORDING") return "Tur registreres nå";
-    if (pendingPoints > 0) return "Turdata venter på synk";
-    if (activeTripId) return "Aktiv tur venter på flere punkter";
-    return "Tracking er klar";
+    if (pendingPoints > 0) return "Turdata venter på sending";
+    if (activeTripId) return "Tur pågår";
+    return "Klar til automatisk turstart";
   }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, state, taskSeemsStale, tracking]);
 
   const summary = useMemo(() => {
-    if (!hasToken) return "Logg inn igjen hvis sesjonen har utløpt. Appen kan ikke sende turdata uten gyldig sesjon.";
-    if (!locationServicesEnabled) return "Telefonens posisjonstjenester er av, så Android kan ikke levere bakgrunnsposisjon til appen.";
-    if (needsPermission) return "Appen trenger både forgrunns- og bakgrunnslokasjon for å oppdage turstart og turstopp.";
-    if (!tracking) return "Bakgrunnsoppgaven kjører ikke ennå. Start den én gang, så holder appen seg klar i bakgrunnen.";
-    if (taskSeemsStale) return "Appen er satt opp for bakgrunnssporing, men Android har ikke levert noen fersk bakgrunnsoppgave nylig. Sjekk at batterisparing ikke holder appen igjen.";
-    if (pendingPoints > 0) return "Det ligger ventende punkter lokalt. De blir sendt automatisk når nett og sesjon er klare.";
-    if (!activeTripId) return startReason;
-    return "Appen følger med i bakgrunnen og skal starte tur automatisk når den ser stabil bevegelse.";
+    if (!hasToken) return "Logg inn igjen hvis sesjonen har utløpt. Uten innlogging kan ikke appen lagre eller sende turer.";
+    if (!locationServicesEnabled) return "Telefonens posisjonstjenester er av. Skru dem på for at automatisk turstart skal virke.";
+    if (needsPermission) return "Appen trenger lokasjonstilgang i bakgrunnen for å kunne oppdage turer automatisk.";
+    if (!tracking) return "Automatisk sporing er ikke slått på ennå. Aktiver den én gang, så holder appen seg klar i bakgrunnen.";
+    if (taskSeemsStale) return "Telefonen har ikke sendt noen fersk bakgrunnsoppdatering på en stund. Sjekk batterisparing hvis dette skjer ofte.";
+    if (pendingPoints > 0) return "Det finnes turdata som ikke er sendt ennå. De blir sendt automatisk når forbindelsen er klar.";
+    if (!activeTripId) return "Appen følger med i bakgrunnen og starter tur automatisk når den ser tydelig bevegelse.";
+    return "En tur er aktiv nå. Appen følger med til turen stopper eller blir sendt.";
   }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, startReason, taskSeemsStale, tracking]);
 
   const detailHint = useMemo(() => {
-    if (pendingPoints > 0) return `${pendingPoints} punkt venter på synkronisering.`;
-    if (activeTripId) return "En tur er aktiv akkurat nå.";
-    if (startCandidateCount > 0) return `Telefonen har sett ${startCandidateCount} av ${2} nødvendige starttegn.`;
-    if (needsAttention) return "Trykk under for flere detaljer hvis noe ikke virker.";
+    if (pendingPoints > 0) return `${pendingPoints} punkt venter fortsatt på å bli sendt.`;
+    if (activeTripId) return "Hvis bilen står stille en stund, avsluttes turen automatisk.";
+    if (startCandidateCount > 0) return "Telefonen ser tegn til bevegelse og vurderer om en ny tur har startet.";
+    if (needsAttention) return "Åpne feilsøking nedenfor hvis du vil se mer detaljert status.";
     return "Alt ser klart ut akkurat nå.";
   }, [activeTripId, needsAttention, pendingPoints, startCandidateCount]);
 
@@ -182,16 +174,16 @@ export default function TrackingScreen() {
     }
 
     return {
-      label: "Oppdater status",
-      onPress: refresh,
-    };
+        label: "Oppdater nå",
+        onPress: refresh,
+      };
   }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, tracking]);
 
   const stateLabel: Record<string, string> = {
-    IDLE: "Telefonen venter på bevegelse",
-    DETECTING_START: "Telefonen oppdager mulig tur",
-    RECORDING: "Telefonen registrerer tur",
-    DETECTING_STOP: "Telefonen vurderer om turen er ferdig",
+    IDLE: "Venter på bevegelse",
+    DETECTING_START: "Sjekker om ny tur har startet",
+    RECORDING: "Registrerer tur",
+    DETECTING_STOP: "Sjekker om turen er avsluttet",
   };
 
   return (
@@ -220,7 +212,7 @@ export default function TrackingScreen() {
       </View>
 
       <View style={styles.reasonCard}>
-        <Text style={styles.sectionTitle}>Hvorfor startet ingen tur?</Text>
+        <Text style={styles.sectionTitle}>Status for automatisk turstart</Text>
         <Text style={styles.reasonText}>{startReason}</Text>
         <Text style={styles.reasonMeta}>
           {lastSpeedKmh !== null ? `Siste fart ${lastSpeedKmh.toFixed(1)} km/t` : "Ingen fersk fart ennå"}
@@ -234,48 +226,26 @@ export default function TrackingScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.secondaryButton} onPress={() => setShowDetails((value) => !value)} activeOpacity={0.85}>
-        <Text style={styles.secondaryButtonText}>{showDetails ? "Skjul detaljer" : "Vis detaljer"}</Text>
+        <Text style={styles.secondaryButtonText}>{showDetails ? "Skjul feilsøking" : "Åpne feilsøking"}</Text>
       </TouchableOpacity>
 
       {showDetails && (
         <>
           <View style={styles.metaCard}>
-            <Text style={styles.sectionTitle}>Detaljer</Text>
+            <Text style={styles.sectionTitle}>Feilsøking</Text>
             <Text style={styles.metaRow}>App-versjon: {Constants.expoConfig?.version ?? "ukjent"}</Text>
-            {activeTripId && <Text style={styles.metaRow}>Aktiv tur: {activeTripId.slice(0, 8)}...</Text>}
-            <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
+            <Text style={styles.metaRow}>Status: {stateLabel[state] ?? state}</Text>
             <Text style={styles.metaRow}>Innlogget sesjon: {hasToken ? "Ja" : "Nei"}</Text>
-            <Text style={styles.metaRow}>Notifikasjonstillatelse: {notificationPermission}</Text>
             <Text style={styles.metaRow}>Posisjonstjenester: {locationServicesEnabled ? "På" : "Av"}</Text>
             <Text style={styles.metaRow}>Forgrunnslokasjon: {foregroundPermission}</Text>
             <Text style={styles.metaRow}>Bakgrunnslokasjon: {backgroundPermission}</Text>
+            <Text style={styles.metaRow}>Notifikasjonstillatelse: {notificationPermission}</Text>
+            <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
             <Text style={styles.metaRow}>Siste fart: {lastSpeedKmh !== null ? `${lastSpeedKmh.toFixed(1)} km/t` : "Ikke registrert"}</Text>
             <Text style={styles.metaRow}>Siste GPS-nøyaktighet: {lastAccuracyMeters !== null ? `${Math.round(lastAccuracyMeters)} m` : "Ikke registrert"}</Text>
-            <Text style={styles.metaRow}>Startkandidater sett: {startCandidateCount}</Text>
-            <Text style={styles.metaRow}>Automatisk startstatus: {startReason}</Text>
             <Text style={styles.metaRow}>Sist bakgrunnsoppgave kjørte: {formatRelativeTime(lastTaskAt)}</Text>
             <Text style={styles.metaRow}>Siste GPS-punkt: {formatRelativeTime(lastPointTimestamp)}</Text>
             <Text style={styles.metaRow}>Siste vellykkede sync: {formatRelativeTime(lastSyncAt)}</Text>
-          </View>
-
-          <View style={styles.metaCard}>
-            <Text style={styles.sectionTitle}>Notifikasjonsdiagnose</Text>
-            <Text style={styles.metaRow}>Turvarsler kanal: {tripNotificationChannel}</Text>
-            <Text style={styles.metaRow}>Bakgrunnssporing kanal: {backgroundNotificationChannel}</Text>
-            <Text style={styles.metaRow}>
-              Android-kanaler på enheten: {availableNotificationChannels.length > 0 ? availableNotificationChannels.length : "Ingen registrert ennå"}
-            </Text>
-            {availableNotificationChannels.length > 0 ? (
-              availableNotificationChannels.map((channel) => (
-                <Text key={channel.id} style={styles.metaRow}>
-                  {channel.id} · {channel.name ?? "uten navn"} · viktighet {channel.importance}
-                </Text>
-              ))
-            ) : (
-              <Text style={styles.metaRow}>
-                Hvis listen er tom, er kanalene trolig ikke opprettet ennå på denne enheten.
-              </Text>
-            )}
           </View>
 
           <View style={styles.logCard}>

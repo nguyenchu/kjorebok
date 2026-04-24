@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl, getAndroidMetadataUrl, getApiBaseUrl } from "@/lib/config";
+import { getAndroidDownloadUrl, getAndroidMetadataUrl } from "@/lib/config";
 import type { TripMode, TripPurpose, TripSummary, Trip } from "@kjorebok/shared";
 
 const MODE_ICONS: Record<TripMode, string> = {
@@ -147,7 +147,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const androidDownloadUrl = getAndroidDownloadUrl();
   const androidMetadataUrl = getAndroidMetadataUrl();
-  const apiBaseUrl = getApiBaseUrl();
   const dayTabsRef = useRef<HTMLDivElement>(null);
   const selectLastDayRef = useRef(false);
   const [trips, setTrips] = useState<TripSummary[]>([]);
@@ -334,9 +333,6 @@ export default function DashboardPage() {
           <p style={{ color: "var(--text-soft)", fontSize: "1rem", maxWidth: 560, marginBottom: "1.25rem" }}>
             Weboversikten viser turene dine fra mobilen. Hvis du ikke kommer videre, åpne innlogging direkte her.
           </p>
-          <p style={{ color: "var(--text-soft)", fontSize: "0.82rem", marginBottom: "1rem" }}>
-            API: {apiBaseUrl}
-          </p>
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
               type="button"
@@ -451,9 +447,6 @@ export default function DashboardPage() {
             </h1>
             <p style={{ color: "var(--text-soft)", fontSize: "1.02rem", maxWidth: 560 }}>
               Her ser du den ferskeste aktiviteten fra mobilen og hele turloggen på ett sted, uten ekstra dashboard-støy.
-            </p>
-            <p style={{ color: "var(--text-soft)", fontSize: "0.82rem", marginTop: "0.85rem" }}>
-              API: {apiBaseUrl}
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", flexWrap: "wrap", justifyContent: "flex-end", position: "relative" }}>

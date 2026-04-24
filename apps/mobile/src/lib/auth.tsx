@@ -20,6 +20,7 @@ interface AuthContextValue extends AuthState {
   login: (dto: LoginDto) => Promise<void>;
   register: (dto: RegisterDto) => Promise<void>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -83,8 +84,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await clearSession({ stop: true });
   };
 
+  const deleteAccount = async () => {
+    await stopTracking().catch(() => {});
+    await api.delete<void>("/auth/me");
+    await clearSession();
+  };
+
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout }}>
+    <AuthContext.Provider value={{ ...state, login, register, logout, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   );

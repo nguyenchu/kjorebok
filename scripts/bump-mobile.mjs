@@ -11,11 +11,14 @@ const appJson = JSON.parse(readFileSync(appJsonPath, "utf8"));
 const current = appJson.expo.version;
 const [major, minor, patch] = current.split(".").map(Number);
 const next = `${major}.${minor}.${patch + 1}`;
+const currentVersionCode = Number(appJson.expo.android?.versionCode ?? 0);
+const nextVersionCode = currentVersionCode + 1;
 
 appJson.expo.version = next;
+appJson.expo.android.versionCode = nextVersionCode;
 writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + "\n");
 
 execSync(`git add ${appJsonPath}`, { stdio: "inherit" });
 execSync(`git commit -m "Bump mobile version to ${next}"`, { stdio: "inherit" });
 
-console.log(`${current} → ${next}`);
+console.log(`${current} (${currentVersionCode}) → ${next} (${nextVersionCode})`);

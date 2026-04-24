@@ -1,4 +1,5 @@
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
+import { useState } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useAuth } from "@/lib/auth";
 import { getApiBaseUrl } from "@/lib/api";
@@ -7,8 +8,38 @@ import { nb } from "date-fns/locale";
 
 export default function ProfileScreen() {
   const tabBarHeight = useBottomTabBarHeight();
-  const { user, logout } = useAuth();
+  const { user, logout, deleteAccount } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDeleteAccount = () => {
+    if (deleting) return;
+
+    Alert.alert(
+      "Slett konto",
+      "Kontoen din og alle registrerte turer blir slettet permanent. Dette kan ikke angres.",
+      [
+        { text: "Avbryt", style: "cancel" },
+        {
+          text: "Slett konto",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              setDeleting(true);
+              try {
+                await deleteAccount();
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "Kunne ikke slette konto akkurat nå.";
+                Alert.alert("Sletting feilet", message);
+              } finally {
+                setDeleting(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <ScrollView
@@ -53,6 +84,19 @@ export default function ProfileScreen() {
 
       <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.8}>
         <Text style={styles.logoutText}>Logg ut</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.deleteButton, deleting && styles.buttonDisabled]}
+        onPress={confirmDeleteAccount}
+        activeOpacity={0.8}
+        disabled={deleting}
+      >
+        {deleting ? (
+          <ActivityIndicator color="#b91c1c" />
+        ) : (
+          <Text style={styles.deleteText}>Slett konto</Text>
+        )}
       </TouchableOpacity>
     </ScrollView>
   );
@@ -103,4 +147,15 @@ const styles = StyleSheet.create({
     borderColor: "#fecaca",
   },
   logoutText: { fontSize: 16, fontWeight: "600", color: "#dc2626" },
+  deleteButton: {
+    backgroundColor: "#fff7f7",
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#fca5a5",
+    marginTop: 12,
+  },
+  deleteText: { fontSize: 16, fontWeight: "700", color: "#b91c1c" },
+  buttonDisabled: { opacity: 0.7 },
 });
