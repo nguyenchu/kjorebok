@@ -133,6 +133,8 @@ android {
         release {
             if (hasInjectedReleaseSigning) {
                 signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
             }
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
