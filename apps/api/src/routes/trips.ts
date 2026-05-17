@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client/index.js";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import type { GpsPoint } from "@kjorebok/shared";
+import type { GpsPoint, Place } from "@kjorebok/shared";
+import { findMatchingPlace } from "../lib/placeMatcher.js";
 
 const gpsPointSchema = z.object({
   lat: z.number(),
@@ -181,6 +182,27 @@ function getLatestRoutePoint(route: GpsPoint[]): GpsPoint | null {
   return route.length > 0 ? route[route.length - 1] : null;
 }
 
+async function loadUserPlaces(userId: string): Promise<Place[]> {
+  return prisma.place.findMany({
+    where: { userId },
+    select: { id: true, label: true, lat: true, lng: true, radiusMeters: true },
+  });
+}
+
+function attachPlaces<T extends { route?: Prisma.JsonValue }>(
+  trip: T,
+  places: Place[],
+): T & { startPlace: Place | null; endPlace: Place | null } {
+  const route = parseRoute(trip.route ?? []);
+  const first = route[0] ?? null;
+  const last = route[route.length - 1] ?? null;
+  return {
+    ...trip,
+    startPlace: findMatchingPlace(places, first?.lat, first?.lng),
+    endPlace: findMatchingPlace(places, last?.lat, last?.lng),
+  };
+}
+
 async function finalizeStaleActiveTrips(userId: string): Promise<void> {
   const activeTrips = await prisma.trip.findMany({
     where: { userId, status: "ACTIVE" },
@@ -232,18 +254,24 @@ export async function tripRoutes(app: FastifyInstance) {
   app.get("/trips/export.csv", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
     await finalizeStaleActiveTrips(userId);
-    const trips = await prisma.trip.findMany({
-      where: { userId, status: "COMPLETED" },
-      orderBy: { startedAt: "asc" },
-      select: {
-        startedAt: true, endedAt: true,
-        distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
-      },
-    });
+    const [trips, places] = await Promise.all([
+      prisma.trip.findMany({
+        where: { userId, status: "COMPLETED" },
+        orderBy: { startedAt: "asc" },
+        select: {
+          startedAt: true, endedAt: true,
+          distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
+          route: true,
+        },
+      }),
+      loadUserPlaces(userId),
+    ]);
+
+    const enriched = trips.map((t) => attachPlaces(t, places));
 
     const rows = [
       ["Dato", "Starttid", "Sluttid", "Varighet (min)", "Distanse (km)", "Fra", "Til", "Formål"],
-      ...trips.map((t) => {
+      ...enriched.map((t) => {
         const start = new Date(t.startedAt);
         const end = t.endedAt ? new Date(t.endedAt) : null;
         const mins = end ? Math.round((end.getTime() - start.getTime()) / 60000) : "";
@@ -252,7 +280,9 @@ export async function tripRoutes(app: FastifyInstance) {
         const endTime = end ? end.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" }) : "";
         const km = (t.distanceMeters / 1000).toFixed(2);
         const purpose = t.purpose === "WORK" ? "Jobb" : "Privat";
-        return [date, startTime, endTime, mins, km, t.startAddress ?? "", t.endAddress ?? "", purpose];
+        const from = t.startPlace?.label ?? t.startAddress ?? "";
+        const to = t.endPlace?.label ?? t.endAddress ?? "";
+        return [date, startTime, endTime, mins, km, from, to, purpose];
       }),
     ];
 
@@ -267,17 +297,25 @@ export async function tripRoutes(app: FastifyInstance) {
   app.get("/trips", auth, async (request, reply) => {
     const userId = (request.user as any).sub;
     await finalizeStaleActiveTrips(userId);
-    const trips = await prisma.trip.findMany({
-      where: { userId },
-      orderBy: { startedAt: "desc" },
-      select: {
-        id: true, userId: true,
-        status: true, startedAt: true, endedAt: true,
-        distanceMeters: true, startAddress: true, endAddress: true,
-        purpose: true, mode: true, createdAt: true, updatedAt: true,
-      },
+    const [trips, places] = await Promise.all([
+      prisma.trip.findMany({
+        where: { userId },
+        orderBy: { startedAt: "desc" },
+        select: {
+          id: true, userId: true,
+          status: true, startedAt: true, endedAt: true,
+          distanceMeters: true, startAddress: true, endAddress: true,
+          purpose: true, mode: true, createdAt: true, updatedAt: true,
+          route: true,
+        },
+      }),
+      loadUserPlaces(userId),
+    ]);
+    const enriched = trips.map((t) => {
+      const { route: _route, ...summary } = attachPlaces(t, places);
+      return summary;
     });
-    return reply.send(trips);
+    return reply.send(enriched);
   });
 
   // Get single trip with route
@@ -285,9 +323,12 @@ export async function tripRoutes(app: FastifyInstance) {
     const userId = (request.user as any).sub;
     await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
-    const trip = await prisma.trip.findFirst({ where: { id, userId } });
+    const [trip, places] = await Promise.all([
+      prisma.trip.findFirst({ where: { id, userId } }),
+      loadUserPlaces(userId),
+    ]);
     if (!trip) return reply.status(404).send({ error: "Not found" });
-    return reply.send(trip);
+    return reply.send(attachPlaces(trip, places));
   });
 
   // Start a new trip

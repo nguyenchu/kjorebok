@@ -71,7 +71,15 @@ function formatDayTabMeta(date: Date): string {
 }
 
 function getTripAddress(trip: TripSummary): string | null {
-  return trip.endAddress ?? trip.startAddress ?? null;
+  return trip.endPlace?.label ?? trip.endAddress ?? trip.startPlace?.label ?? trip.startAddress ?? null;
+}
+
+function getTripStartLabel(trip: { startPlace?: { label: string } | null; startAddress: string | null }): string {
+  return trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start";
+}
+
+function getTripEndLabel(trip: { endPlace?: { label: string } | null; endAddress: string | null }): string {
+  return trip.endPlace?.label ?? trip.endAddress ?? "Ukjent slutt";
 }
 
 function getWeekStart(weekOffset: number): Date {
@@ -452,6 +460,21 @@ export default function DashboardPage() {
           <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", flexWrap: "wrap", justifyContent: "flex-end", position: "relative" }}>
             <span style={{ color: "var(--text-soft)", fontSize: "0.92rem" }}>{user?.name}</span>
             <button
+              onClick={() => router.push("/places")}
+              style={{
+                padding: "0.6rem 0.95rem",
+                background: "rgba(255,255,255,0.72)",
+                border: "1px solid rgba(148, 163, 184, 0.28)",
+                borderRadius: "999px",
+                cursor: "pointer",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+                color: "var(--text)",
+              }}
+            >
+              Steder
+            </button>
+            <button
               onClick={() => { logout(); router.push("/login"); }}
               style={{
                 padding: "0.6rem 0.95rem",
@@ -494,9 +517,9 @@ export default function DashboardPage() {
             </div>
             <div style={{ color: "var(--text-muted)", fontSize: "0.94rem" }}>
               {activeTrip
-                ? `${activeTrip.startAddress ?? "Ukjent start"} → ${activeTrip.endAddress ?? "Pågår"}`
+                ? `${getTripStartLabel(activeTrip)} → ${activeTrip.endPlace?.label ?? activeTrip.endAddress ?? "Pågår"}`
                 : latestTrip
-                  ? `${latestTrip.startAddress ?? "Ukjent start"} → ${latestTrip.endAddress ?? "Ukjent slutt"}`
+                  ? `${getTripStartLabel(latestTrip)} → ${getTripEndLabel(latestTrip)}`
                   : "Når mobilen begynner å registrere turer dukker de opp her."}
             </div>
           </div>
@@ -765,7 +788,7 @@ export default function DashboardPage() {
                       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.3rem" }}>
                         <span style={{ fontSize: "1.1rem" }}>{MODE_ICONS[trip.mode ?? "CAR"]}</span>
                         <span style={{ fontWeight: 700, fontSize: "1rem" }}>
-                          {trip.startAddress ?? "Ukjent start"} → {trip.endAddress ?? "Ukjent slutt"}
+                          {getTripStartLabel(trip)} → {getTripEndLabel(trip)}
                         </span>
                       </div>
                       <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>
@@ -901,7 +924,7 @@ export default function DashboardPage() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem", borderBottom: "1px solid var(--border)" }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: "1rem" }}>
-                  {mapTrip ? `${mapTrip.startAddress ?? "Ukjent start"} → ${mapTrip.endAddress ?? "Ukjent slutt"}` : "Laster kart…"}
+                  {mapTrip ? `${getTripStartLabel(mapTrip)} → ${getTripEndLabel(mapTrip)}` : "Laster kart…"}
                 </div>
                 {mapTrip && (
                   <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>

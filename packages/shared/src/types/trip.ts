@@ -1,3 +1,5 @@
+import type { Place } from "./place";
+
 export type TripStatus = "ACTIVE" | "COMPLETED";
 export type TripPurpose = "PRIVATE" | "WORK";
 export type TripMode = "WALK" | "CYCLE" | "EBIKE" | "CAR" | "OTHER";
@@ -20,6 +22,8 @@ export interface Trip {
   distanceMeters: number;
   startAddress: string | null;
   endAddress: string | null;
+  startPlace: Place | null;
+  endPlace: Place | null;
   purpose: TripPurpose;
   mode: TripMode;
   route: GpsPoint[];

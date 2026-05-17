@@ -56,7 +56,7 @@ export default function TripDetailScreen() {
       <Stack.Screen
         options={{
           title: trip
-            ? `${trip.startAddress ?? "Ukjent start"} → ${trip.endAddress ?? "Ukjent slutt"}`
+            ? `${trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start"} → ${trip.endPlace?.label ?? trip.endAddress ?? "Ukjent slutt"}`
             : "Tur",
           headerBackTitle: "Tilbake",
           headerStyle: { backgroundColor: "#eef6ff" },

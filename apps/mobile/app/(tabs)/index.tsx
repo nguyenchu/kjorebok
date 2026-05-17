@@ -40,7 +40,15 @@ function formatDayTabMeta(date: Date): string {
 }
 
 function getTripAddress(trip: TripSummary): string | null {
-  return trip.endAddress ?? trip.startAddress ?? null;
+  return trip.endPlace?.label ?? trip.endAddress ?? trip.startPlace?.label ?? trip.startAddress ?? null;
+}
+
+function getTripStartLabel(trip: TripSummary): string {
+  return trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start";
+}
+
+function getTripEndLabel(trip: TripSummary): string | null {
+  return trip.endPlace?.label ?? trip.endAddress ?? null;
 }
 
 function getWeekStart(weekOffset: number): Date {
@@ -178,12 +186,12 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
           )}
         </View>
         <Text style={styles.route} numberOfLines={2}>
-          {trip.startAddress ?? "Ukjent start"}
+          {getTripStartLabel(trip)}
         </Text>
-        {trip.endAddress && (
+        {getTripEndLabel(trip) && (
           <View style={styles.destinationRow}>
             <Text style={styles.arrow}>→</Text>
-            <Text style={styles.route} numberOfLines={2}>{trip.endAddress}</Text>
+            <Text style={styles.route} numberOfLines={2}>{getTripEndLabel(trip)}</Text>
           </View>
         )}
       </TouchableOpacity>

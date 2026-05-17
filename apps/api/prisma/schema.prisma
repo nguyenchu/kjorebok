@@ -15,6 +15,21 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   trips        Trip[]
+  places       Place[]
+}
+
+model Place {
+  id           String   @id @default(cuid())
+  userId       String
+  label        String
+  lat          Float
+  lng          Float
+  radiusMeters Int      @default(100)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Trip {
