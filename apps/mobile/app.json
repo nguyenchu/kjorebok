@@ -2,13 +2,13 @@
   "expo": {
     "name": "Kjørebok",
     "slug": "kjorebok",
-    "version": "1.0.46",
+    "version": "1.0.47",
     "orientation": "portrait",
     "scheme": "kjorebok",
     "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "no.kjorebok.app",
+      "bundleIdentifier": "com.nguyenchu.kjorebok",
       "infoPlist": {
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Kjørebok bruker GPS til å oppdage automatisk når du starter og avslutter en kjøretur. Lokasjonen brukes kun til turregistrering og deles ikke med andre.",
         "NSLocationAlwaysUsageDescription": "For å registrere turer automatisk mens du kjører trenger Kjørebok tilgang til GPS hele tiden — også når appen er lukket.",
@@ -20,13 +20,13 @@
       }
     },
     "android": {
-      "package": "no.kjorebok.app",
+      "package": "com.nguyenchu.kjorebok",
       "icon": "./assets/android-launcher-icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-launcher-icon.png",
         "backgroundColor": "#FFFFFF"
       },
-      "versionCode": 46,
+      "versionCode": 47,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION",

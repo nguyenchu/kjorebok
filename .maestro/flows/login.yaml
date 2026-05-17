@@ -1,4 +1,4 @@
-appId: no.kjorebok.app
+appId: com.nguyenchu.kjorebok
 ---
 - launchApp:
     clearState: true

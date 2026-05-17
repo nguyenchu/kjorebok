@@ -1,4 +1,4 @@
-package no.kjorebok.app
+package com.nguyenchu.kjorebok
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

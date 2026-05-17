@@ -1,4 +1,4 @@
-package no.kjorebok.app
+package com.nguyenchu.kjorebok
 
 import android.app.Application
 import android.content.res.Configuration

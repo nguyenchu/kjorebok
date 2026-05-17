@@ -29,7 +29,7 @@ const STATIONARY_MAX_SPREAD_METERS = 15;
 const DEFINITIVE_MOVING_SPEED_MS = 15 / 3.6;
 const POSITION_WINDOW_MAX_SAMPLES = 60;
 const TRIP_NOTIFICATION_CHANNEL = "trips";
-const BACKGROUND_NOTIFICATION_CHANNEL = "no.kjorebok.app:kjorebok-background-location";
+const BACKGROUND_NOTIFICATION_CHANNEL = "com.nguyenchu.kjorebok:kjorebok-background-location";
 
 type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 

@@ -100,9 +100,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'no.kjorebok.app'
+    namespace 'com.nguyenchu.kjorebok'
     defaultConfig {
-        applicationId 'no.kjorebok.app'
+        applicationId 'com.nguyenchu.kjorebok'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode resolvedVersionCode
