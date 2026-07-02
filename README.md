@@ -1,5 +1,43 @@
 # Kjørebok
 
+A full-stack driving-logbook (Norwegian *kjørebok*) for tracking trips for
+mileage and tax purposes — available on both web and mobile, backed by a shared
+API. Built as a production-style monorepo with CI/CD, containerized local
+development, and end-to-end mobile tests.
+
+> Live: [kjorebok.nguyenchu.com](https://kjorebok.nguyenchu.com) · Android APK published from CI
+
+## Architecture
+
+A [Turborepo](https://turbo.build) monorepo with three apps and a shared package,
+so domain types and validation are written once and consumed everywhere:
+
+```
+apps/
+  api      Fastify + Prisma + PostgreSQL — REST API with JWT auth
+  web      Next.js (React) + Leaflet maps
+  mobile   Expo / React Native (iOS + Android)
+packages/
+  shared   Types + Zod schemas shared across api, web and mobile
+```
+
+## Tech stack
+
+| Layer     | Tech |
+|-----------|------|
+| **API**   | Fastify, Prisma ORM, PostgreSQL, JWT auth (`@fastify/jwt`, `bcryptjs`), Zod validation |
+| **Web**   | Next.js, React, React-Leaflet (trip maps), date-fns |
+| **Mobile**| Expo, React Native, Expo Router |
+| **Shared**| TypeScript types + Zod schemas reused across all apps |
+| **Infra** | Turborepo, Docker Compose (local Postgres), GitHub Actions (deploy web/API + build & publish Android APK), Maestro (mobile E2E) |
+
+## Highlights
+
+- **End-to-end type safety** — one `shared` package feeds types and Zod schemas to API, web and mobile, so a schema change surfaces everywhere at compile time.
+- **Real CI/CD** — GitHub Actions builds and deploys web + API and produces a downloadable Android APK, versioned independently of the visible semver.
+- **Containerized local dev** — `docker compose up` gives a real Postgres; Prisma migrations are checked in.
+- **Automated mobile testing** — Maestro E2E flows (see `docs/maestro-mobile-testing.md`).
+
 ## Lokal utvikling
 
 Bruk Node 22 lokalt for dette repoet.
