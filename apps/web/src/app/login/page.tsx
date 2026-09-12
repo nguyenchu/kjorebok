@@ -3,62 +3,24 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl, getAndroidMetadataUrl } from "@/lib/config";
 
 type Mode = "login" | "register";
-type AndroidReleaseMetadata = {
-  version: string;
-  versionCode: number;
-  publishedAt: string;
-};
 
 export default function LoginPage() {
   const { user, loading: authLoading, login, register } = useAuth();
   const router = useRouter();
-  const androidDownloadUrl = getAndroidDownloadUrl();
-  const androidMetadataUrl = getAndroidMetadataUrl();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [androidVersion, setAndroidVersion] = useState<AndroidReleaseMetadata | null>(null);
-  const [androidVersionLoaded, setAndroidVersionLoaded] = useState(false);
 
   useEffect(() => {
     if (!authLoading && user) {
       router.replace("/");
     }
   }, [authLoading, router, user]);
-
-  useEffect(() => {
-    if (!androidMetadataUrl) return;
-
-    let cancelled = false;
-
-    fetch(androidMetadataUrl, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        return (await response.json()) as AndroidReleaseMetadata;
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setAndroidVersion(data);
-          setAndroidVersionLoaded(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAndroidVersion(null);
-          setAndroidVersionLoaded(true);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [androidMetadataUrl]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,45 +112,6 @@ export default function LoginPage() {
             Les personvernerklæringen
           </Link>
         </p>
-
-        <div
-          style={{
-            marginTop: "1.25rem",
-            background: "#eff6ff",
-            border: "1px solid #bfdbfe",
-            borderRadius: "16px",
-            padding: "1rem",
-          }}
-        >
-          <p style={{ fontWeight: 700, marginBottom: "0.35rem" }}>Trenger du Android-appen?</p>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.92rem", marginBottom: androidDownloadUrl ? "0.8rem" : 0 }}>
-            Turene registreres på mobilen og blir synlige her i weboversikten.
-          </p>
-          {androidDownloadUrl && (
-            <div>
-              <a
-                href={androidDownloadUrl}
-                style={{
-                  display: "inline-block",
-                  background: "var(--primary)",
-                  color: "#fff",
-                  padding: "0.75rem 0.95rem",
-                  borderRadius: "999px",
-                  fontWeight: 700,
-                }}
-              >
-                Last ned for Android (APK{androidVersion ? ` v${androidVersion.version}` : ""})
-              </a>
-              <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginTop: "0.55rem" }}>
-                {androidVersion
-                  ? `Appversjon ${androidVersion.version}`
-                  : androidVersionLoaded
-                    ? "Appversjon utilgjengelig akkurat nå"
-                    : "Henter appversjon..."}
-              </p>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

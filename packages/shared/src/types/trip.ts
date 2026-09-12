@@ -1,4 +1,5 @@
 import type { Place } from "./place";
+import type { Vehicle } from "./vehicle";
 
 export type TripStatus = "ACTIVE" | "COMPLETED";
 export type TripPurpose = "PRIVATE" | "WORK";
@@ -25,7 +26,14 @@ export interface Trip {
   startPlace: Place | null;
   endPlace: Place | null;
   purpose: TripPurpose;
+  /** Fritekst formål, påkrevd dokumentasjon for yrkeskjøring. */
+  purposeNote: string | null;
+  /** Oppdragsgiver eller hvem som ble besøkt. */
+  client: string | null;
   mode: TripMode;
+  vehicle: Vehicle | null;
+  odometerStart: number | null;
+  odometerEnd: number | null;
   route: GpsPoint[];
   createdAt: string;
   updatedAt: string;
@@ -53,5 +61,10 @@ export type TripSummary = Omit<Trip, "route">;
 
 export interface UpdateTripDto {
   purpose?: TripPurpose;
+  purposeNote?: string | null;
+  client?: string | null;
   mode?: TripMode;
+  vehicleId?: string | null;
+  odometerStart?: number | null;
+  odometerEnd?: number | null;
 }

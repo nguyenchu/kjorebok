@@ -3,6 +3,15 @@ import type { Prisma } from "@prisma/client/index.js";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import type { GpsPoint, Place } from "@kjorebok/shared";
+import { calculateAllowance } from "../lib/rates.js";
+import {
+  renderKjorebokCsv,
+  renderKjorebokPdf,
+  summarizeRows,
+  type KjorebokReport,
+  type KjorebokRow,
+} from "../lib/kjorebokReport.js";
+import { periodLabel, periodRange, periodSlug, periodYearOf } from "../lib/period.js";
 import { findMatchingPlace } from "../lib/placeMatcher.js";
 
 const gpsPointSchema = z.object({
@@ -34,8 +43,37 @@ const endTripSchema = z.object({
 
 const updateTripSchema = z.object({
   purpose: z.enum(["PRIVATE", "WORK"]).optional(),
+  purposeNote: z.string().trim().max(200).nullable().optional(),
+  client: z.string().trim().max(120).nullable().optional(),
   mode: z.enum(["WALK", "CYCLE", "EBIKE", "CAR", "OTHER"]).optional(),
+  vehicleId: z.string().cuid().nullable().optional(),
+  odometerStart: z.number().int().nonnegative().max(3_000_000).nullable().optional(),
+  odometerEnd: z.number().int().nonnegative().max(3_000_000).nullable().optional(),
 });
+
+const reportQuerySchema = z
+  .object({
+    year: z.coerce.number().int().min(2000).max(2100).optional(),
+    month: z.coerce.number().int().min(1).max(12).optional(),
+    vehicleId: z.string().cuid().optional(),
+    purpose: z.enum(["PRIVATE", "WORK"]).optional(),
+  })
+  .refine((value) => value.month === undefined || value.year !== undefined, {
+    message: "month krever at year er satt",
+    path: ["month"],
+  });
+
+const tripVehicleSelect = {
+  select: { id: true, label: true, registration: true, type: true, isDefault: true },
+} as const;
+
+const tripDocumentationSelect = {
+  purposeNote: true,
+  client: true,
+  odometerStart: true,
+  odometerEnd: true,
+  vehicle: tripVehicleSelect,
+} as const;
 
 const MIN_TRIP_DISTANCE_METERS = 50;
 const MAX_MODE_ACCURACY_METERS = 80;
@@ -247,50 +285,113 @@ async function finalizeStaleActiveTrips(userId: string): Promise<void> {
   }
 }
 
+type ReportFilters = z.infer<typeof reportQuerySchema>;
+
+async function buildKjorebokReport(
+  userId: string,
+  filters: ReportFilters,
+): Promise<KjorebokReport | null> {
+  await finalizeStaleActiveTrips(userId);
+
+  const where: Prisma.TripWhereInput = { userId, status: "COMPLETED" };
+  if (filters.vehicleId) where.vehicleId = filters.vehicleId;
+  if (filters.purpose) where.purpose = filters.purpose;
+
+  const range = periodRange(filters.year, filters.month);
+  if (range) where.startedAt = range;
+
+  const [trips, places, user, vehicle] = await Promise.all([
+    prisma.trip.findMany({
+      where,
+      orderBy: { startedAt: "asc" },
+      select: {
+        startedAt: true, endedAt: true,
+        distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
+        ...tripDocumentationSelect,
+        route: true,
+      },
+    }),
+    loadUserPlaces(userId),
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
+    filters.vehicleId
+      ? prisma.vehicle.findFirst({
+          where: { id: filters.vehicleId, userId },
+          select: { label: true, registration: true, type: true },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (!user) return null;
+  if (filters.vehicleId && !vehicle) return null;
+
+  const rows: KjorebokRow[] = trips.map((trip) => {
+    const enriched = attachPlaces(trip, places);
+    return {
+      startedAt: enriched.startedAt,
+      endedAt: enriched.endedAt,
+      from: enriched.startPlace?.label ?? enriched.startAddress ?? "—",
+      to: enriched.endPlace?.label ?? enriched.endAddress ?? "—",
+      purpose: enriched.purpose,
+      purposeNote: enriched.purposeNote,
+      client: enriched.client,
+      registration: enriched.vehicle?.registration ?? null,
+      vehicleLabel: enriched.vehicle?.label ?? null,
+      odometerStart: enriched.odometerStart,
+      odometerEnd: enriched.odometerEnd,
+      distanceMeters: enriched.distanceMeters,
+      allowance: calculateAllowance(enriched.distanceMeters, periodYearOf(enriched.startedAt)),
+    };
+  });
+
+  return {
+    rows,
+    totals: summarizeRows(rows),
+    periodLabel: periodLabel(filters.year, filters.month),
+    owner: user,
+    vehicle,
+    generatedAt: new Date(),
+  };
+}
+
 export async function tripRoutes(app: FastifyInstance) {
   const auth = { onRequest: [(app as any).authenticate] };
 
-  // Export trips as CSV
+  // Kjørebok reports. Both formats render the same rows, so the numbers in the
+  // CSV and the PDF cannot drift apart.
+  // Filters: ?year=2026&month=3&vehicleId=...&purpose=WORK
   app.get("/trips/export.csv", auth, async (request, reply) => {
+    const query = reportQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: query.error.flatten() });
+
     const userId = (request.user as any).sub;
-    await finalizeStaleActiveTrips(userId);
-    const [trips, places] = await Promise.all([
-      prisma.trip.findMany({
-        where: { userId, status: "COMPLETED" },
-        orderBy: { startedAt: "asc" },
-        select: {
-          startedAt: true, endedAt: true,
-          distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
-          route: true,
-        },
-      }),
-      loadUserPlaces(userId),
-    ]);
+    const report = await buildKjorebokReport(userId, query.data);
+    if (!report) return reply.status(404).send({ error: "Not found" });
 
-    const enriched = trips.map((t) => attachPlaces(t, places));
-
-    const rows = [
-      ["Dato", "Starttid", "Sluttid", "Varighet (min)", "Distanse (km)", "Fra", "Til", "Formål"],
-      ...enriched.map((t) => {
-        const start = new Date(t.startedAt);
-        const end = t.endedAt ? new Date(t.endedAt) : null;
-        const mins = end ? Math.round((end.getTime() - start.getTime()) / 60000) : "";
-        const date = start.toLocaleDateString("nb-NO");
-        const startTime = start.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
-        const endTime = end ? end.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" }) : "";
-        const km = (t.distanceMeters / 1000).toFixed(2);
-        const purpose = t.purpose === "WORK" ? "Jobb" : "Privat";
-        const from = t.startPlace?.label ?? t.startAddress ?? "";
-        const to = t.endPlace?.label ?? t.endAddress ?? "";
-        return [date, startTime, endTime, mins, km, from, to, purpose];
-      }),
-    ];
-
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-
+    const { year, month } = query.data;
     reply.header("Content-Type", "text/csv; charset=utf-8");
-    reply.header("Content-Disposition", "attachment; filename=\"kjorebok.csv\"");
-    return reply.send("\uFEFF" + csv); // BOM for Excel
+    reply.header(
+      "Content-Disposition",
+      `attachment; filename="kjorebok${periodSlug(year, month)}.csv"`,
+    );
+    return reply.send(renderKjorebokCsv(report));
+  });
+
+  app.get("/trips/report.pdf", auth, async (request, reply) => {
+    const query = reportQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: query.error.flatten() });
+
+    const userId = (request.user as any).sub;
+    const report = await buildKjorebokReport(userId, query.data);
+    if (!report) return reply.status(404).send({ error: "Not found" });
+
+    const pdf = await renderKjorebokPdf(report);
+    const { year, month } = query.data;
+    reply.header("Content-Type", "application/pdf");
+    reply.header(
+      "Content-Disposition",
+      `attachment; filename="kjorebok${periodSlug(year, month)}.pdf"`,
+    );
+    return reply.send(pdf);
   });
 
   // List trips (summary, no route)
@@ -306,6 +407,7 @@ export async function tripRoutes(app: FastifyInstance) {
           status: true, startedAt: true, endedAt: true,
           distanceMeters: true, startAddress: true, endAddress: true,
           purpose: true, mode: true, createdAt: true, updatedAt: true,
+          ...tripDocumentationSelect,
           route: true,
         },
       }),
@@ -324,7 +426,7 @@ export async function tripRoutes(app: FastifyInstance) {
     await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
     const [trip, places] = await Promise.all([
-      prisma.trip.findFirst({ where: { id, userId } }),
+      prisma.trip.findFirst({ where: { id, userId }, include: { vehicle: tripVehicleSelect } }),
       loadUserPlaces(userId),
     ]);
     if (!trip) return reply.status(404).send({ error: "Not found" });
@@ -445,6 +547,21 @@ export async function tripRoutes(app: FastifyInstance) {
     const trip = await prisma.trip.findFirst({ where: { id, userId } });
     if (!trip) return reply.status(404).send({ error: "Not found" });
 
+    if (body.data.vehicleId) {
+      const vehicle = await prisma.vehicle.findFirst({
+        where: { id: body.data.vehicleId, userId },
+        select: { id: true },
+      });
+      if (!vehicle) return reply.status(400).send({ error: "Ukjent kjøretøy" });
+    }
+
+    // Compare against the values the update leaves behind, not just the ones sent.
+    const odometerStart = body.data.odometerStart !== undefined ? body.data.odometerStart : trip.odometerStart;
+    const odometerEnd = body.data.odometerEnd !== undefined ? body.data.odometerEnd : trip.odometerEnd;
+    if (odometerStart !== null && odometerEnd !== null && odometerEnd < odometerStart) {
+      return reply.status(400).send({ error: "Kilometerstand ved slutt kan ikke være lavere enn ved start" });
+    }
+
     const updated = await prisma.trip.update({
       where: { id },
       data: body.data,
@@ -453,6 +570,7 @@ export async function tripRoutes(app: FastifyInstance) {
         status: true, startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true,
         purpose: true, mode: true, createdAt: true, updatedAt: true,
+        ...tripDocumentationSelect,
       },
     });
     return reply.send(updated);

@@ -4,6 +4,8 @@ import { authPlugin } from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { tripRoutes } from "./routes/trips.js";
 import { placeRoutes } from "./routes/places.js";
+import { vehicleRoutes } from "./routes/vehicles.js";
+import { rateRoutes } from "./routes/rates.js";
 
 const app = Fastify({ logger: true });
 const apiPrefix = normalizeApiPrefix(process.env.API_PREFIX);
@@ -13,6 +15,8 @@ await app.register(authPlugin);
 await app.register(authRoutes, { prefix: apiPrefix });
 await app.register(tripRoutes, { prefix: apiPrefix });
 await app.register(placeRoutes, { prefix: apiPrefix });
+await app.register(vehicleRoutes, { prefix: apiPrefix });
+await app.register(rateRoutes, { prefix: apiPrefix });
 
 app.get(`${apiPrefix}/health`, async () => ({ ok: true }));
 

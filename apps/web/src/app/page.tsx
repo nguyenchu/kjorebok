@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { getAndroidDownloadUrl, getAndroidMetadataUrl } from "@/lib/config";
+import { getAndroidDownloadUrl } from "@/lib/config";
 import type { TripMode, TripPurpose, TripSummary, Trip } from "@kjorebok/shared";
 
 const MODE_ICONS: Record<TripMode, string> = {
@@ -31,12 +31,6 @@ type DayLog = {
   day: Date;
   trips: TripSummary[];
   lastKnownAddress: string | null;
-};
-
-type AndroidReleaseMetadata = {
-  version: string;
-  versionCode: number;
-  publishedAt: string;
 };
 
 function formatDistance(meters: number) {
@@ -154,19 +148,17 @@ export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
   const androidDownloadUrl = getAndroidDownloadUrl();
-  const androidMetadataUrl = getAndroidMetadataUrl();
   const dayTabsRef = useRef<HTMLDivElement>(null);
   const selectLastDayRef = useRef(false);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [androidVersion, setAndroidVersion] = useState<AndroidReleaseMetadata | null>(null);
-  const [androidVersionLoaded, setAndroidVersionLoaded] = useState(false);
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [selectedDayKey, setSelectedDayKey] = useState(format(new Date(), "yyyy-MM-dd"));
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [mapTrip, setMapTrip] = useState<Trip | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
+  const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -177,34 +169,6 @@ export default function DashboardPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (!androidMetadataUrl) return;
-
-    let cancelled = false;
-
-    fetch(androidMetadataUrl, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        return (await response.json()) as AndroidReleaseMetadata;
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setAndroidVersion(data);
-          setAndroidVersionLoaded(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAndroidVersion(null);
-          setAndroidVersionLoaded(true);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [androidMetadataUrl]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Slett turen?")) return;
@@ -247,6 +211,23 @@ export default function DashboardPage() {
       alert(e.message ?? "Kunne ikke laste tur.");
     } finally {
       setMapLoading(false);
+    }
+  };
+
+  const handleDownloadReport = async (format: "csv" | "pdf") => {
+    setExporting(format);
+    try {
+      const blob = await api.getBlob(format === "pdf" ? "/trips/report.pdf" : "/trips/export.csv");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = format === "pdf" ? "kjorebok.pdf" : "kjorebok.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e.message ?? "Kunne ikke laste ned rapporten.");
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -431,7 +412,7 @@ export default function DashboardPage() {
         />
 
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem", marginBottom: "1.5rem", flexWrap: "wrap", position: "relative" }}>
-          <div style={{ maxWidth: 640 }}>
+          <div style={{ flex: "1 1 320px", minWidth: 0, maxWidth: 640 }}>
             <div
               style={{
                 display: "inline-flex",
@@ -457,12 +438,14 @@ export default function DashboardPage() {
               Her ser du den ferskeste aktiviteten fra mobilen og hele turloggen på ett sted, uten ekstra dashboard-støy.
             </p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", flexWrap: "wrap", justifyContent: "flex-end", position: "relative" }}>
-            <span style={{ color: "var(--text-soft)", fontSize: "0.92rem" }}>{user?.name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.55rem", flexWrap: "wrap", justifyContent: "flex-start", position: "relative", flex: "1 1 260px", minWidth: 0, maxWidth: "100%" }}>
+            <span style={{ color: "var(--text-soft)", fontSize: "0.92rem", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 100%" }}>{user?.name}</span>
             <button
+              type="button"
               onClick={() => router.push("/places")}
               style={{
                 padding: "0.6rem 0.95rem",
+                flex: "1 1 7.5rem",
                 background: "rgba(255,255,255,0.72)",
                 border: "1px solid rgba(148, 163, 184, 0.28)",
                 borderRadius: "999px",
@@ -475,9 +458,11 @@ export default function DashboardPage() {
               Steder
             </button>
             <button
+              type="button"
               onClick={() => { logout(); router.push("/login"); }}
               style={{
                 padding: "0.6rem 0.95rem",
+                flex: "1 1 7.5rem",
                 background: "rgba(255,255,255,0.72)",
                 border: "1px solid rgba(148, 163, 184, 0.28)",
                 borderRadius: "999px",
@@ -563,6 +548,24 @@ export default function DashboardPage() {
         >
           <p style={{ fontSize: "1rem", marginBottom: "0.35rem" }}>Ingen turer ennå.</p>
           <p>Start kjørebok-appen på mobilen for å registrere de første turene.</p>
+          {androidDownloadUrl && (
+            <a
+              href={androidDownloadUrl}
+              style={{
+                display: "inline-flex",
+                marginTop: "1rem",
+                padding: "0.65rem 0.95rem",
+                background: "var(--text)",
+                color: "#fff",
+                borderRadius: "999px",
+                fontSize: "0.88rem",
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              Last ned Android-appen
+            </a>
+          )}
         </div>
       )}
 
@@ -573,20 +576,32 @@ export default function DashboardPage() {
           </p>
           <h2 style={{ fontSize: "1.45rem", fontWeight: 800, letterSpacing: "-0.03em" }}>Turlogg</h2>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.65rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
             {trips.length} {trips.length === 1 ? "tur" : "turer"} vist
           </p>
           <button
-            onClick={async () => {
-              const blob = await api.getBlob("/trips/export.csv");
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = "kjorebok.csv";
-              a.click();
-              URL.revokeObjectURL(url);
+            type="button"
+            onClick={() => handleDownloadReport("pdf")}
+            disabled={exporting !== null}
+            style={{
+              padding: "0.45rem 0.9rem",
+              background: "var(--text)",
+              border: "1px solid var(--text)",
+              borderRadius: "999px",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              color: "#fff",
+              cursor: exporting ? "wait" : "pointer",
+              opacity: exporting === "csv" ? 0.68 : 1,
             }}
+          >
+            {exporting === "pdf" ? "Laster ned..." : "Last ned PDF"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDownloadReport("csv")}
+            disabled={exporting !== null}
             style={{
               padding: "0.45rem 0.9rem",
               background: "rgba(255,255,255,0.86)",
@@ -595,10 +610,11 @@ export default function DashboardPage() {
               fontSize: "0.85rem",
               fontWeight: 600,
               color: "var(--text)",
-              cursor: "pointer",
+              cursor: exporting ? "wait" : "pointer",
+              opacity: exporting === "pdf" ? 0.68 : 1,
             }}
           >
-            Eksporter CSV
+            {exporting === "csv" ? "Laster ned..." : "Eksporter CSV"}
           </button>
         </div>
       </div>
@@ -948,52 +964,6 @@ export default function DashboardPage() {
               {mapTrip && <TripMap route={mapTrip.route} />}
             </div>
           </div>
-        </div>
-      )}
-
-      {androidDownloadUrl && (
-        <div
-          style={{
-            marginTop: "2rem",
-            padding: "1.1rem 1.25rem",
-            background: "rgba(255,255,255,0.82)",
-            border: "1px solid var(--border)",
-            borderRadius: "20px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "1rem",
-            flexWrap: "wrap",
-            boxShadow: "0 12px 26px rgba(15, 23, 42, 0.05)",
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.2rem" }}>
-              Last ned Kjørebok for Android
-            </div>
-            <div style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
-              {androidVersion
-                ? `Appversjon ${androidVersion.version}`
-                : androidVersionLoaded
-                  ? "Appversjon utilgjengelig akkurat nå"
-                  : "Henter appversjon..."}
-            </div>
-          </div>
-          <a
-            href={androidDownloadUrl}
-            style={{
-              padding: "0.6rem 1.1rem",
-              background: "var(--text)",
-              color: "#fff",
-              borderRadius: "999px",
-              fontWeight: 700,
-              fontSize: "0.88rem",
-              textDecoration: "none",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Last ned APK{androidVersion ? ` v${androidVersion.version}` : ""}
-          </a>
         </div>
       )}
 
