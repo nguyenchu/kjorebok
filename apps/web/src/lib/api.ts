@@ -46,7 +46,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${getBaseUrl()}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      // Only declare JSON when a body is actually sent: Fastify rejects a
+      // bodyless request that claims application/json with a 400
+      // (FST_ERR_CTP_EMPTY_JSON_BODY), which broke every DELETE.
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
