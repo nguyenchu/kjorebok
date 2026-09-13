@@ -459,6 +459,40 @@ export default function DashboardPage() {
             </button>
             <button
               type="button"
+              onClick={() => router.push("/vehicles")}
+              style={{
+                padding: "0.6rem 0.95rem",
+                flex: "1 1 7.5rem",
+                background: "rgba(255,255,255,0.72)",
+                border: "1px solid rgba(148, 163, 184, 0.28)",
+                borderRadius: "999px",
+                cursor: "pointer",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+                color: "var(--text)",
+              }}
+            >
+              Kjøretøy
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/rapport")}
+              style={{
+                padding: "0.6rem 0.95rem",
+                flex: "1 1 7.5rem",
+                background: "rgba(255,255,255,0.72)",
+                border: "1px solid rgba(148, 163, 184, 0.28)",
+                borderRadius: "999px",
+                cursor: "pointer",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+                color: "var(--text)",
+              }}
+            >
+              Rapport
+            </button>
+            <button
+              type="button"
               onClick={() => { logout(); router.push("/login"); }}
               style={{
                 padding: "0.6rem 0.95rem",

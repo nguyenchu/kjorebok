@@ -2,6 +2,12 @@
  * Auto trip detection using expo-location background tasks.
  *
  * Tracking is intended to stay on continuously once permissions are granted.
+ *
+ * Background invocations get a small, interruptible CPU budget — especially on
+ * iOS — so the whole tracker state is read once into a snapshot, mutated in
+ * memory across a whole location batch, and written back once. Every entry
+ * point runs through `serialize` so overlapping task callbacks can never
+ * interleave two reads of the same state and start duplicate trips.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -16,9 +22,12 @@ export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 25;
-const MAX_PENDING_POINTS = 500;
+const MAX_PENDING_POINTS = 2000;
 const MAX_USABLE_ACCURACY_METERS = 40;
 const MAX_ROUTE_ACCURACY_METERS = 30;
+/** Relaxed ceiling used to avoid gaps when accuracy stays poor for a while. */
+const FALLBACK_ROUTE_ACCURACY_METERS = 75;
+const ROUTE_GAP_TOLERANCE_MS = 60 * 1000;
 const MIN_ROUTE_POINT_DISTANCE_METERS = 5;
 // Windowed motion detection constants
 const MOVEMENT_WINDOW_MS = 60 * 1000;
@@ -47,9 +56,31 @@ const LAST_ACCURACY_KEY = "tracker_last_accuracy";
 const START_CANDIDATE_COUNT_KEY = "tracker_start_candidate_count";
 const START_REASON_KEY = "tracker_start_reason";
 const START_FAIL_COUNT_KEY = "tracker_start_fail_count";
+const LAST_ROUTE_POINT_AT_KEY = "tracker_last_route_point_at";
+const SELECTED_VEHICLE_KEY = "tracker_selected_vehicle";
 const MAX_START_FAIL_COUNT = 6;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
+
+const SNAPSHOT_KEYS = [
+  STATE_KEY,
+  ACTIVE_TRIP_KEY,
+  STOP_TIME_KEY,
+  PENDING_POINTS_KEY,
+  LAST_POINT_KEY,
+  POSITION_WINDOW_KEY,
+  LAST_SYNC_AT_KEY,
+  LOG_ENTRIES_KEY,
+  LAST_SPEED_KEY,
+  LAST_ACCURACY_KEY,
+  START_CANDIDATE_COUNT_KEY,
+  START_REASON_KEY,
+  START_FAIL_COUNT_KEY,
+  LAST_ROUTE_POINT_AT_KEY,
+  SELECTED_VEHICLE_KEY,
+] as const;
+
+const DEFAULT_START_REASON = "Telefonen venter på tydelig bevegelse.";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -92,148 +123,192 @@ export interface TrackerDiagnostics {
   lastAccuracyMeters: number | null;
   startCandidateCount: number;
   startReason: string;
+  selectedVehicleId: string | null;
   recentEvents: TrackerLogEntry[];
-}
-
-let syncPromise: Promise<void> | null = null;
-
-async function get(key: string): Promise<string | null> {
-  return AsyncStorage.getItem(key);
-}
-
-async function set(key: string, value: string): Promise<void> {
-  await AsyncStorage.setItem(key, value);
-}
-
-async function clear(key: string): Promise<void> {
-  await AsyncStorage.removeItem(key);
-}
-
-async function getRecentEvents(): Promise<TrackerLogEntry[]> {
-  const raw = await get(LOG_ENTRIES_KEY);
-  if (!raw) return [];
-
-  try {
-    const parsed = JSON.parse(raw) as TrackerLogEntry[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function appendLog(message: string, level: LogLevel = "info"): Promise<void> {
-  const nextEntry: TrackerLogEntry = {
-    timestamp: new Date().toISOString(),
-    level,
-    message,
-  };
-  const entries = await getRecentEvents();
-  entries.unshift(nextEntry);
-  await set(LOG_ENTRIES_KEY, JSON.stringify(entries.slice(0, MAX_LOG_ENTRIES)));
-}
-
-async function markSyncSuccess(timestamp = new Date().toISOString()): Promise<void> {
-  await set(LAST_SYNC_AT_KEY, timestamp);
-}
-
-async function markTaskHeartbeat(timestamp = new Date().toISOString()): Promise<void> {
-  await set(LAST_TASK_AT_KEY, timestamp);
-}
-
-async function getPendingPoints(): Promise<GpsPoint[]> {
-  const raw = await get(PENDING_POINTS_KEY);
-  if (!raw) return [];
-
-  try {
-    const parsed = JSON.parse(raw) as GpsPoint[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function setPendingPoints(points: GpsPoint[]): Promise<void> {
-  await set(PENDING_POINTS_KEY, JSON.stringify(points.slice(-MAX_PENDING_POINTS)));
-}
-
-async function getLastPoint(): Promise<GpsPoint | null> {
-  const raw = await get(LAST_POINT_KEY);
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as GpsPoint;
-    if (
-      typeof parsed?.lat === "number" &&
-      typeof parsed?.lng === "number" &&
-      typeof parsed?.timestamp === "string"
-    ) {
-      return parsed;
-    }
-  } catch {}
-
-  return null;
-}
-
-async function setLastPoint(point: GpsPoint): Promise<void> {
-  await set(LAST_POINT_KEY, JSON.stringify(point));
 }
 
 type PositionSample = { lat: number; lng: number; timestamp: string };
 
-async function getPositionWindow(): Promise<PositionSample[]> {
-  const raw = await get(POSITION_WINDOW_KEY);
-  if (!raw) return [];
+/**
+ * The whole tracker state, held in memory for the duration of one invocation.
+ * `dirty` keys are the only ones written back, so a snapshot that only read
+ * state costs nothing on the way out.
+ */
+interface Snapshot {
+  state: TrackerState;
+  activeTripId: string | null;
+  stopTime: number | null;
+  pendingPoints: GpsPoint[];
+  lastPoint: GpsPoint | null;
+  positionWindow: PositionSample[];
+  lastSyncAt: string | null;
+  logEntries: TrackerLogEntry[];
+  lastSpeed: number | null;
+  lastAccuracy: number | null;
+  startCandidateCount: number;
+  startReason: string;
+  startFailCount: number;
+  lastRoutePointAt: number | null;
+  selectedVehicleId: string | null;
+  dirty: Set<string>;
+}
 
+/**
+ * Serializes every entry point. Two background callbacks firing while the app
+ * is alive share this module instance, and without the queue both could read
+ * state "IDLE" and each POST a new trip.
+ */
+let workQueue: Promise<unknown> = Promise.resolve();
+
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const run = () => fn();
+  const next = workQueue.then(run, run);
+  workQueue = next.catch(() => undefined);
+  return next;
+}
+
+function parseJson<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
   try {
-    const parsed = JSON.parse(raw) as PositionSample[];
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed = JSON.parse(raw) as T;
+    return parsed ?? fallback;
   } catch {
-    return [];
+    return fallback;
   }
 }
 
-async function setPositionWindow(samples: PositionSample[]): Promise<void> {
-  await set(POSITION_WINDOW_KEY, JSON.stringify(samples.slice(-POSITION_WINDOW_MAX_SAMPLES)));
-}
-
-async function setStartReason(reason: string): Promise<void> {
-  await set(START_REASON_KEY, reason);
-}
-
-async function getStartReason(): Promise<string> {
-  return (await get(START_REASON_KEY)) ?? "Telefonen venter på tydelig bevegelse.";
-}
-
-async function setStartCandidateCount(count: number): Promise<void> {
-  await set(START_CANDIDATE_COUNT_KEY, String(Math.max(0, count)));
-}
-
-async function getStartCandidateCount(): Promise<number> {
-  return Number((await get(START_CANDIDATE_COUNT_KEY)) ?? "0");
-}
-
-async function setLastTelemetry(point: GpsPoint): Promise<void> {
-  await set(LAST_SPEED_KEY, String(point.speed));
-  await set(LAST_ACCURACY_KEY, String(point.accuracy));
-}
-
-async function getLastSpeedKmh(): Promise<number | null> {
-  const raw = await get(LAST_SPEED_KEY);
+function parseNumber(raw: string | null): number | null {
   if (!raw) return null;
-
-  const speed = Number(raw);
-  return Number.isFinite(speed) ? speed * 3.6 : null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
 }
 
-async function getLastAccuracyMeters(): Promise<number | null> {
-  const raw = await get(LAST_ACCURACY_KEY);
-  if (!raw) return null;
-
-  const accuracy = Number(raw);
-  return Number.isFinite(accuracy) ? accuracy : null;
+function isGpsPoint(value: unknown): value is GpsPoint {
+  const point = value as GpsPoint | null;
+  return (
+    typeof point?.lat === "number" &&
+    typeof point?.lng === "number" &&
+    typeof point?.timestamp === "string"
+  );
 }
 
-function haversineMeters(a: GpsPoint, b: GpsPoint): number {
+async function loadSnapshot(): Promise<Snapshot> {
+  const entries = await AsyncStorage.multiGet(SNAPSHOT_KEYS as unknown as string[]);
+  const map = new Map(entries);
+  const read = (key: string) => map.get(key) ?? null;
+
+  const lastPoint = parseJson<GpsPoint | null>(read(LAST_POINT_KEY), null);
+  const positionWindow = parseJson<PositionSample[]>(read(POSITION_WINDOW_KEY), []);
+  const pendingPoints = parseJson<GpsPoint[]>(read(PENDING_POINTS_KEY), []);
+  const logEntries = parseJson<TrackerLogEntry[]>(read(LOG_ENTRIES_KEY), []);
+
+  return {
+    state: (read(STATE_KEY) ?? "IDLE") as TrackerState,
+    activeTripId: read(ACTIVE_TRIP_KEY),
+    stopTime: parseNumber(read(STOP_TIME_KEY)),
+    pendingPoints: Array.isArray(pendingPoints) ? pendingPoints.filter(isGpsPoint) : [],
+    lastPoint: isGpsPoint(lastPoint) ? lastPoint : null,
+    positionWindow: Array.isArray(positionWindow) ? positionWindow : [],
+    lastSyncAt: read(LAST_SYNC_AT_KEY),
+    logEntries: Array.isArray(logEntries) ? logEntries : [],
+    lastSpeed: parseNumber(read(LAST_SPEED_KEY)),
+    lastAccuracy: parseNumber(read(LAST_ACCURACY_KEY)),
+    startCandidateCount: parseNumber(read(START_CANDIDATE_COUNT_KEY)) ?? 0,
+    startReason: read(START_REASON_KEY) ?? DEFAULT_START_REASON,
+    startFailCount: parseNumber(read(START_FAIL_COUNT_KEY)) ?? 0,
+    lastRoutePointAt: parseNumber(read(LAST_ROUTE_POINT_AT_KEY)),
+    selectedVehicleId: read(SELECTED_VEHICLE_KEY),
+    dirty: new Set(),
+  };
+}
+
+function serializeValue(snapshot: Snapshot, key: string): string | null {
+  switch (key) {
+    case STATE_KEY:
+      return snapshot.state;
+    case ACTIVE_TRIP_KEY:
+      return snapshot.activeTripId;
+    case STOP_TIME_KEY:
+      return snapshot.stopTime === null ? null : String(snapshot.stopTime);
+    case PENDING_POINTS_KEY:
+      return JSON.stringify(snapshot.pendingPoints);
+    case LAST_POINT_KEY:
+      return snapshot.lastPoint ? JSON.stringify(snapshot.lastPoint) : null;
+    case POSITION_WINDOW_KEY:
+      return JSON.stringify(snapshot.positionWindow);
+    case LAST_SYNC_AT_KEY:
+      return snapshot.lastSyncAt;
+    case LOG_ENTRIES_KEY:
+      return JSON.stringify(snapshot.logEntries);
+    case LAST_SPEED_KEY:
+      return snapshot.lastSpeed === null ? null : String(snapshot.lastSpeed);
+    case LAST_ACCURACY_KEY:
+      return snapshot.lastAccuracy === null ? null : String(snapshot.lastAccuracy);
+    case START_CANDIDATE_COUNT_KEY:
+      return String(snapshot.startCandidateCount);
+    case START_REASON_KEY:
+      return snapshot.startReason;
+    case START_FAIL_COUNT_KEY:
+      return String(snapshot.startFailCount);
+    case LAST_ROUTE_POINT_AT_KEY:
+      return snapshot.lastRoutePointAt === null ? null : String(snapshot.lastRoutePointAt);
+    case SELECTED_VEHICLE_KEY:
+      return snapshot.selectedVehicleId;
+    default:
+      return null;
+  }
+}
+
+async function saveSnapshot(snapshot: Snapshot): Promise<void> {
+  if (snapshot.dirty.size === 0) return;
+
+  const writes: Array<[string, string]> = [];
+  const removals: string[] = [];
+
+  for (const key of snapshot.dirty) {
+    const value = serializeValue(snapshot, key);
+    if (value === null) removals.push(key);
+    else writes.push([key, value]);
+  }
+
+  snapshot.dirty.clear();
+
+  await Promise.all([
+    writes.length > 0 ? AsyncStorage.multiSet(writes) : Promise.resolve(),
+    removals.length > 0 ? AsyncStorage.multiRemove(removals) : Promise.resolve(),
+  ]);
+}
+
+function touch(snapshot: Snapshot, ...keys: string[]): void {
+  for (const key of keys) snapshot.dirty.add(key);
+}
+
+function setStartReason(snapshot: Snapshot, reason: string): void {
+  if (snapshot.startReason === reason) return;
+  snapshot.startReason = reason;
+  touch(snapshot, START_REASON_KEY);
+}
+
+function log(snapshot: Snapshot, message: string, level: LogLevel = "info"): void {
+  snapshot.logEntries.unshift({
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+  });
+  snapshot.logEntries = snapshot.logEntries.slice(0, MAX_LOG_ENTRIES);
+  touch(snapshot, LOG_ENTRIES_KEY);
+}
+
+function markSyncSuccess(snapshot: Snapshot): void {
+  snapshot.lastSyncAt = new Date().toISOString();
+  touch(snapshot, LAST_SYNC_AT_KEY);
+}
+
+async function markTaskHeartbeat(timestamp = new Date().toISOString()): Promise<void> {
+  await AsyncStorage.setItem(LAST_TASK_AT_KEY, timestamp);
+}
+
+function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371000;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
   const dLng = ((b.lng - a.lng) * Math.PI) / 180;
@@ -249,10 +324,6 @@ function isUsableAccuracy(point: GpsPoint): boolean {
   return point.accuracy > 0 && point.accuracy <= MAX_USABLE_ACCURACY_METERS;
 }
 
-function haversineLatLng(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  return haversineMeters(a as GpsPoint, b as GpsPoint);
-}
-
 function sampleAgeMs(samples: PositionSample[]): number {
   if (samples.length < 2) return 0;
   const first = new Date(samples[0].timestamp).getTime();
@@ -265,31 +336,43 @@ function samplesInLastMs(samples: PositionSample[], windowMs: number, nowMs: num
   return samples.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
 }
 
+/**
+ * Bounding-box diagonal rather than an O(n²) pairwise scan — same decision at
+ * the 15 m threshold, but cheap enough to run on every point in a batch.
+ */
 function maxSpreadMeters(samples: PositionSample[]): number {
   if (samples.length < 2) return 0;
-  let max = 0;
-  for (let i = 0; i < samples.length; i++) {
-    for (let j = i + 1; j < samples.length; j++) {
-      const d = haversineLatLng(samples[i], samples[j]);
-      if (d > max) max = d;
-    }
+
+  let minLat = samples[0].lat;
+  let maxLat = samples[0].lat;
+  let minLng = samples[0].lng;
+  let maxLng = samples[0].lng;
+
+  for (const sample of samples) {
+    if (sample.lat < minLat) minLat = sample.lat;
+    if (sample.lat > maxLat) maxLat = sample.lat;
+    if (sample.lng < minLng) minLng = sample.lng;
+    if (sample.lng > maxLng) maxLng = sample.lng;
   }
-  return max;
+
+  return haversineMeters({ lat: minLat, lng: minLng }, { lat: maxLat, lng: maxLng });
 }
 
-async function recordPositionSample(point: GpsPoint, nowMs: number): Promise<PositionSample[]> {
-  const window = await getPositionWindow();
+function recordPositionSample(snapshot: Snapshot, point: GpsPoint, nowMs: number): PositionSample[] {
   const cutoff = nowMs - MOVEMENT_WINDOW_MS;
-  const pruned = window.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
+  const pruned = snapshot.positionWindow.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
+  const usable = isUsableAccuracy(point);
 
-  if (isUsableAccuracy(point)) {
+  if (usable) {
     pruned.push({ lat: point.lat, lng: point.lng, timestamp: point.timestamp });
   }
 
-  if (pruned.length !== window.length || isUsableAccuracy(point)) {
-    await setPositionWindow(pruned);
+  if (usable || pruned.length !== snapshot.positionWindow.length) {
+    snapshot.positionWindow = pruned.slice(-POSITION_WINDOW_MAX_SAMPLES);
+    touch(snapshot, POSITION_WINDOW_KEY);
   }
-  return pruned;
+
+  return snapshot.positionWindow;
 }
 
 type MotionAssessment = {
@@ -299,9 +382,8 @@ type MotionAssessment = {
 
 function evaluateMotion(point: GpsPoint, window: PositionSample[], nowMs: number): MotionAssessment {
   const age = sampleAgeMs(window);
-  const netDisp = window.length >= 2
-    ? haversineLatLng(window[0], window[window.length - 1])
-    : 0;
+  const netDisp =
+    window.length >= 2 ? haversineMeters(window[0], window[window.length - 1]) : 0;
 
   const fastPathMoving = point.speed >= DEFINITIVE_MOVING_SPEED_MS;
   const windowMoving = age >= SUSTAINED_MIN_AGE_MS && netDisp >= SUSTAINED_MOVE_DISTANCE_METERS;
@@ -320,27 +402,33 @@ function evaluateMotion(point: GpsPoint, window: PositionSample[], nowMs: number
   };
 }
 
-async function storeLocationTelemetry(point: GpsPoint): Promise<void> {
-  await setLastTelemetry(point);
-  await markTaskHeartbeat(point.timestamp);
+/**
+ * Drops every second point from the older half instead of truncating the head,
+ * so a long offline trip keeps its real start rather than losing it.
+ */
+function decimatePendingPoints(points: GpsPoint[]): GpsPoint[] {
+  const half = Math.floor(points.length / 2);
+  const older = points.slice(0, half).filter((_, index) => index % 2 === 0);
+  return [...older, ...points.slice(half)];
 }
 
-async function enqueuePoint(point: GpsPoint): Promise<void> {
-  await setLastPoint(point);
+function enqueuePoint(snapshot: Snapshot, point: GpsPoint, nowMs: number): void {
+  snapshot.lastPoint = point;
+  touch(snapshot, LAST_POINT_KEY);
 
-  if (point.accuracy <= 0 || point.accuracy > MAX_ROUTE_ACCURACY_METERS) {
-    return;
-  }
+  if (point.accuracy <= 0) return;
 
-  const points = await getPendingPoints();
-  const last = points[points.length - 1];
+  // Poor accuracy normally disqualifies a point, but rejecting every one of
+  // them through a tunnel or urban canyon punches a hole in the recorded
+  // distance — which is the number the whole logbook exists to report.
+  const gapMs = snapshot.lastRoutePointAt === null ? 0 : nowMs - snapshot.lastRoutePointAt;
+  const ceiling =
+    gapMs >= ROUTE_GAP_TOLERANCE_MS ? FALLBACK_ROUTE_ACCURACY_METERS : MAX_ROUTE_ACCURACY_METERS;
+  if (point.accuracy > ceiling) return;
 
+  const last = snapshot.pendingPoints[snapshot.pendingPoints.length - 1];
   if (last) {
-    if (
-      last.timestamp === point.timestamp &&
-      last.lat === point.lat &&
-      last.lng === point.lng
-    ) {
+    if (last.timestamp === point.timestamp && last.lat === point.lat && last.lng === point.lng) {
       return;
     }
     if (haversineMeters(last, point) < MIN_ROUTE_POINT_DISTANCE_METERS) {
@@ -348,8 +436,12 @@ async function enqueuePoint(point: GpsPoint): Promise<void> {
     }
   }
 
-  points.push(point);
-  await setPendingPoints(points);
+  snapshot.pendingPoints.push(point);
+  if (snapshot.pendingPoints.length > MAX_PENDING_POINTS) {
+    snapshot.pendingPoints = decimatePendingPoints(snapshot.pendingPoints);
+  }
+  snapshot.lastRoutePointAt = nowMs;
+  touch(snapshot, PENDING_POINTS_KEY, LAST_ROUTE_POINT_AT_KEY);
 }
 
 function toGpsPoint(loc: Location.LocationObject): GpsPoint {
@@ -389,28 +481,19 @@ async function reverseGeocode(point: GpsPoint): Promise<string | null> {
   }
 }
 
-async function flushPendingPoints(tripId: string): Promise<void> {
-  if (syncPromise) {
-    await syncPromise;
-    return;
-  }
-
-  syncPromise = (async () => {
-    while (true) {
-      const points = await getPendingPoints();
-      if (points.length === 0) break;
-
-      const batch = points.slice(0, SYNC_BATCH_SIZE);
-      await api.post(`/trips/${tripId}/points/batch`, { points: batch });
-      await setPendingPoints(points.slice(batch.length));
-      await markSyncSuccess();
-    }
-  })();
-
-  try {
-    await syncPromise;
-  } finally {
-    syncPromise = null;
+/**
+ * Sends queued points and removes exactly what the server accepted. Earlier
+ * this rewrote the queue as `points.slice(batch.length)` from a list read
+ * before the request, silently discarding anything appended while it was in
+ * flight.
+ */
+async function flushPendingPoints(snapshot: Snapshot, tripId: string): Promise<void> {
+  while (snapshot.pendingPoints.length > 0) {
+    const batch = snapshot.pendingPoints.slice(0, SYNC_BATCH_SIZE);
+    await api.post(`/trips/${tripId}/points/batch`, { points: batch });
+    snapshot.pendingPoints = snapshot.pendingPoints.slice(batch.length);
+    touch(snapshot, PENDING_POINTS_KEY);
+    markSyncSuccess(snapshot);
   }
 }
 
@@ -467,6 +550,11 @@ async function startBackgroundLocationUpdates(): Promise<void> {
     timeInterval: 3000,
     distanceInterval: 10,
     showsBackgroundLocationIndicator: true,
+    // Without these iOS decides on its own that the user has stopped, pauses
+    // location updates, and never resumes them — the app then misses every
+    // trip until it is manually reopened.
+    activityType: Location.ActivityType.AutomotiveNavigation,
+    pausesUpdatesAutomatically: false,
     foregroundService: {
       notificationTitle: "Kjørebok",
       notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
@@ -474,55 +562,92 @@ async function startBackgroundLocationUpdates(): Promise<void> {
   });
 }
 
-async function startTrip(point: GpsPoint): Promise<boolean> {
+async function startTrip(snapshot: Snapshot, point: GpsPoint): Promise<boolean> {
   try {
     const startAddress = await reverseGeocode(point);
     const trip = await api.post<{ id: string }>("/trips", {
       startPoint: point,
       startAddress,
+      ...(snapshot.selectedVehicleId ? { vehicleId: snapshot.selectedVehicleId } : {}),
     });
 
-    await clear(PENDING_POINTS_KEY);
-    await setLastPoint(point);
-    await markSyncSuccess();
-    await set(ACTIVE_TRIP_KEY, trip.id);
-    await set(STATE_KEY, "RECORDING");
-    await setStartReason("Tur er aktiv.");
-    await setStartCandidateCount(0);
-    await appendLog("Tur startet automatisk.");
+    snapshot.pendingPoints = [];
+    snapshot.lastPoint = point;
+    snapshot.lastRoutePointAt = new Date(point.timestamp).getTime();
+    snapshot.activeTripId = trip.id;
+    snapshot.state = "RECORDING";
+    snapshot.startCandidateCount = 0;
+    snapshot.startFailCount = 0;
+    markSyncSuccess(snapshot);
+    setStartReason(snapshot, "Tur er aktiv.");
+    log(snapshot, "Tur startet automatisk.");
+    touch(
+      snapshot,
+      PENDING_POINTS_KEY,
+      LAST_POINT_KEY,
+      LAST_ROUTE_POINT_AT_KEY,
+      ACTIVE_TRIP_KEY,
+      STATE_KEY,
+      START_CANDIDATE_COUNT_KEY,
+      START_FAIL_COUNT_KEY
+    );
     await sendNotification("Tur startet", startAddress ? `Fra: ${startAddress}` : "GPS-sporing er aktiv.");
     return true;
   } catch (error) {
-    await appendLog(
-      `Kunne ikke starte tur${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
-      "error"
-    );
-    await set(STATE_KEY, "IDLE");
-    await setStartReason("Kunne ikke starte tur automatisk.");
-    await setStartCandidateCount(0);
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    log(snapshot, `Kunne ikke starte tur${message}`, "error");
+    // Stay in DETECTING_START rather than dropping to IDLE: the usual cause is
+    // a dead network at the start of the drive, and the next fix retries
+    // instead of abandoning the trip.
+    snapshot.state = "DETECTING_START";
+    setStartReason(snapshot, "Kunne ikke starte tur ennå. Prøver igjen ved neste posisjon.");
+    touch(snapshot, STATE_KEY);
     return false;
   }
 }
 
-async function resetActiveTripState(): Promise<void> {
-  await clear(PENDING_POINTS_KEY);
-  await clear(ACTIVE_TRIP_KEY);
-  await clear(STOP_TIME_KEY);
-  await clear(LAST_POINT_KEY);
-  await clear(POSITION_WINDOW_KEY);
-  await clear(START_FAIL_COUNT_KEY);
-  await setStartCandidateCount(0);
-  await setStartReason("Telefonen venter på tydelig bevegelse.");
-  await set(STATE_KEY, "IDLE");
+function resetActiveTripState(snapshot: Snapshot): void {
+  snapshot.pendingPoints = [];
+  snapshot.activeTripId = null;
+  snapshot.stopTime = null;
+  snapshot.lastPoint = null;
+  snapshot.positionWindow = [];
+  snapshot.startFailCount = 0;
+  snapshot.startCandidateCount = 0;
+  snapshot.lastRoutePointAt = null;
+  snapshot.state = "IDLE";
+  setStartReason(snapshot, DEFAULT_START_REASON);
+  touch(
+    snapshot,
+    PENDING_POINTS_KEY,
+    ACTIVE_TRIP_KEY,
+    STOP_TIME_KEY,
+    LAST_POINT_KEY,
+    POSITION_WINDOW_KEY,
+    START_FAIL_COUNT_KEY,
+    START_CANDIDATE_COUNT_KEY,
+    LAST_ROUTE_POINT_AT_KEY,
+    STATE_KEY
+  );
 }
 
-async function finishTrip(tripId: string, endPoint: GpsPoint): Promise<void> {
+/**
+ * Ends the trip on the server. Local state is only cleared once the server has
+ * the data (or has confirmed the trip is gone) — clearing it unconditionally
+ * used to throw away unsent points and leave the trip open server-side.
+ */
+async function finishTrip(snapshot: Snapshot, tripId: string, endPoint: GpsPoint): Promise<void> {
   try {
-    await flushPendingPoints(tripId);
+    await flushPendingPoints(snapshot, tripId);
     const endAddress = await reverseGeocode(endPoint);
-    const result = await api.post<{ distanceMeters?: number } | null>(`/trips/${tripId}/end`, { endPoint, endAddress });
-    await markSyncSuccess();
-    await appendLog("Tur fullfort og sendt til server.");
+    const result = await api.post<{ distanceMeters?: number } | null>(`/trips/${tripId}/end`, {
+      endPoint,
+      endAddress,
+    });
+    markSyncSuccess(snapshot);
+    log(snapshot, "Tur fullført og sendt til server.");
+    resetActiveTripState(snapshot);
+
     // result is null if server deleted the trip (too short)
     if (result && typeof result.distanceMeters === "number" && result.distanceMeters >= 50) {
       const km = (result.distanceMeters / 1000).toFixed(1);
@@ -531,32 +656,30 @@ async function finishTrip(tripId: string, endPoint: GpsPoint): Promise<void> {
     }
   } catch (error) {
     if (isMissingActiveTripError(error)) {
-      await appendLog("Aktiv tur fantes ikke lenger på serveren. Lokal turstatus ble nullstilt.", "warn");
+      log(snapshot, "Aktiv tur fantes ikke lenger på serveren. Lokal turstatus ble nullstilt.", "warn");
+      resetActiveTripState(snapshot);
       return;
     }
-    await appendLog(
-      `Kunne ikke fullfore tur${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
-      "error"
-    );
+
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    log(snapshot, `Kunne ikke fullføre tur${message}`, "error");
+    setStartReason(snapshot, "Turen er ferdig, men venter på å bli sendt til serveren.");
     throw error;
-  } finally {
-    await resetActiveTripState();
   }
 }
 
-async function closeStaleTrip(referenceTimestamp: number): Promise<boolean> {
-  const tripId = await get(ACTIVE_TRIP_KEY);
-  if (!tripId) return false;
+async function closeStaleTrip(snapshot: Snapshot, referenceTimestamp: number): Promise<boolean> {
+  if (!snapshot.activeTripId) return false;
 
-  const lastPoint = await getLastPoint();
+  const lastPoint = snapshot.lastPoint;
   if (!lastPoint) {
-    await resetActiveTripState();
+    resetActiveTripState(snapshot);
     return true;
   }
 
   const lastPointTime = new Date(lastPoint.timestamp).getTime();
   if (!Number.isFinite(lastPointTime)) {
-    await resetActiveTripState();
+    resetActiveTripState(snapshot);
     return true;
   }
 
@@ -564,190 +687,220 @@ async function closeStaleTrip(referenceTimestamp: number): Promise<boolean> {
     return false;
   }
 
-  await appendLog("Avsluttet gammel aktiv tur automatisk.");
-  await finishTrip(tripId, lastPoint);
+  log(snapshot, "Avsluttet gammel aktiv tur automatisk.");
+  await finishTrip(snapshot, snapshot.activeTripId, lastPoint);
   return true;
 }
 
-async function handleLocation(loc: Location.LocationObject): Promise<void> {
+async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject): Promise<void> {
   const point = toGpsPoint(loc);
   const nowMs = loc.timestamp;
   const hasGoodAccuracy = isUsableAccuracy(point);
-  const window = await recordPositionSample(point, nowMs);
+  const window = recordPositionSample(snapshot, point, nowMs);
   const motion = evaluateMotion(point, window, nowMs);
 
-  await storeLocationTelemetry(point);
-  await closeStaleTrip(nowMs);
-  const state = ((await get(STATE_KEY)) ?? "IDLE") as TrackerState;
+  snapshot.lastSpeed = point.speed;
+  snapshot.lastAccuracy = point.accuracy;
+  touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY);
 
-  switch (state) {
+  // Wall-clock, not the point timestamp: a queued location delivered late must
+  // not look like a 30-minute-old trip. A failure here must not abort the rest
+  // of the batch — the trip stays open and the next fix retries.
+  await closeStaleTrip(snapshot, Date.now()).catch(() => undefined);
+
+  switch (snapshot.state) {
     case "IDLE": {
       if (!hasGoodAccuracy) {
-        await setStartReason(`Venter på bedre GPS-nøyaktighet. Siste måling var ${Math.round(point.accuracy)} meter.`);
+        setStartReason(
+          snapshot,
+          `Venter på bedre GPS-nøyaktighet. Siste måling var ${Math.round(point.accuracy)} meter.`
+        );
         break;
       }
       if (motion.isMoving) {
-        await set(STATE_KEY, "DETECTING_START");
-        await setStartCandidateCount(1);
-        await setStartReason("Oppdaget bevegelse. Bekrefter med ett punkt til før turen starter.");
-        await appendLog("Oppdaget bevegelse som kan starte tur.");
+        snapshot.state = "DETECTING_START";
+        snapshot.startCandidateCount = 1;
+        touch(snapshot, STATE_KEY, START_CANDIDATE_COUNT_KEY);
+        setStartReason(snapshot, "Oppdaget bevegelse. Bekrefter med ett punkt til før turen starter.");
+        log(snapshot, "Oppdaget bevegelse som kan starte tur.");
       } else {
-        await setStartReason("Venter på tydelig bevegelse før tur starter automatisk.");
+        setStartReason(snapshot, "Venter på tydelig bevegelse før tur starter automatisk.");
       }
       break;
     }
 
     case "DETECTING_START": {
       if (!hasGoodAccuracy) {
-        await setStartReason(`Venter på bedre GPS-nøyaktighet (${Math.round(point.accuracy)} m) før tur kan starte.`);
+        setStartReason(
+          snapshot,
+          `Venter på bedre GPS-nøyaktighet (${Math.round(point.accuracy)} m) før tur kan starte.`
+        );
         break;
       }
       if (motion.isMoving) {
-        await clear(START_FAIL_COUNT_KEY);
-        await startTrip(point);
+        snapshot.startFailCount = 0;
+        touch(snapshot, START_FAIL_COUNT_KEY);
+        await startTrip(snapshot, point);
       } else {
-        const failCount = Number((await get(START_FAIL_COUNT_KEY)) ?? "0") + 1;
+        const failCount = snapshot.startFailCount + 1;
         if (failCount >= MAX_START_FAIL_COUNT) {
-          await clear(START_FAIL_COUNT_KEY);
-          await set(STATE_KEY, "IDLE");
-          await setStartCandidateCount(0);
-          await setStartReason("Turstart ble avbrutt fordi bevegelsen stoppet opp igjen.");
-          await appendLog("Avbrøt turstart fordi bevegelsen stoppet.", "warn");
+          snapshot.startFailCount = 0;
+          snapshot.state = "IDLE";
+          snapshot.startCandidateCount = 0;
+          touch(snapshot, START_FAIL_COUNT_KEY, STATE_KEY, START_CANDIDATE_COUNT_KEY);
+          setStartReason(snapshot, "Turstart ble avbrutt fordi bevegelsen stoppet opp igjen.");
+          log(snapshot, "Avbrøt turstart fordi bevegelsen stoppet.", "warn");
         } else {
-          await set(START_FAIL_COUNT_KEY, String(failCount));
-          await setStartReason(`Venter — bevegelse usikker. Forsøk ${failCount}/${MAX_START_FAIL_COUNT}.`);
+          snapshot.startFailCount = failCount;
+          touch(snapshot, START_FAIL_COUNT_KEY);
+          setStartReason(snapshot, `Venter — bevegelse usikker. Forsøk ${failCount}/${MAX_START_FAIL_COUNT}.`);
         }
       }
       break;
     }
 
     case "RECORDING": {
-      const tripId = await get(ACTIVE_TRIP_KEY);
+      const tripId = snapshot.activeTripId;
       if (!tripId) {
-        await set(STATE_KEY, "IDLE");
-        await setStartReason("Ingen aktiv tur akkurat nå.");
+        snapshot.state = "IDLE";
+        touch(snapshot, STATE_KEY);
+        setStartReason(snapshot, "Ingen aktiv tur akkurat nå.");
         return;
       }
 
-      await enqueuePoint(point);
-      await flushPendingPoints(tripId).catch(async (error) => {
-        if (isMissingActiveTripError(error)) {
-          await appendLog("Serveren manglet aktiv tur. Nullstilte lokal turstatus.", "warn");
-          await resetActiveTripState();
-          return;
-        }
-        await appendLog(
-          `Kunne ikke sende punkter${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
-          "error"
-        );
-      });
+      enqueuePoint(snapshot, point, nowMs);
+      await flushWithRecovery(snapshot, tripId, "Kunne ikke sende punkter");
 
       if (motion.isStationary) {
-        await set(STATE_KEY, "DETECTING_STOP");
-        await set(STOP_TIME_KEY, String(nowMs));
-        await setStartReason("Tur ser ut til å nærme seg stopp.");
-        await appendLog("Mulig turstopp oppdaget.");
+        snapshot.state = "DETECTING_STOP";
+        snapshot.stopTime = nowMs;
+        touch(snapshot, STATE_KEY, STOP_TIME_KEY);
+        setStartReason(snapshot, "Tur ser ut til å nærme seg stopp.");
+        log(snapshot, "Mulig turstopp oppdaget.");
       } else {
-        await setStartReason("Tur er aktiv.");
+        setStartReason(snapshot, "Tur er aktiv.");
       }
       break;
     }
 
     case "DETECTING_STOP": {
-      const tripId = await get(ACTIVE_TRIP_KEY);
+      const tripId = snapshot.activeTripId;
       if (!tripId) {
-        await set(STATE_KEY, "IDLE");
-        await setStartReason("Ingen aktiv tur akkurat nå.");
+        snapshot.state = "IDLE";
+        touch(snapshot, STATE_KEY);
+        setStartReason(snapshot, "Ingen aktiv tur akkurat nå.");
         return;
       }
 
-      await enqueuePoint(point);
+      enqueuePoint(snapshot, point, nowMs);
 
       if (motion.isMoving && hasGoodAccuracy) {
-        await set(STATE_KEY, "RECORDING");
-        await clear(STOP_TIME_KEY);
-        await flushPendingPoints(tripId).catch(async (error) => {
-          if (isMissingActiveTripError(error)) {
-            await appendLog("Serveren manglet aktiv tur etter stopp. Nullstilte lokal turstatus.", "warn");
-            await resetActiveTripState();
-            return;
-          }
-          await appendLog(
-            `Kunne ikke sende punkter etter stopp${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
-            "error"
-          );
-        });
-        await setStartReason("Tur fortsetter.");
-        await appendLog("Tur fortsetter etter kort stopp.");
+        snapshot.state = "RECORDING";
+        snapshot.stopTime = null;
+        touch(snapshot, STATE_KEY, STOP_TIME_KEY);
+        await flushWithRecovery(snapshot, tripId, "Kunne ikke sende punkter etter stopp");
+        setStartReason(snapshot, "Tur fortsetter.");
+        log(snapshot, "Tur fortsetter etter kort stopp.");
         return;
       }
 
-      const stopTime = Number((await get(STOP_TIME_KEY)) ?? "0");
-      if (nowMs - stopTime >= STOP_CONFIRM_MS) {
-        await finishTrip(tripId, point);
+      if (snapshot.stopTime !== null && nowMs - snapshot.stopTime >= STOP_CONFIRM_MS) {
+        // A failed end leaves the trip recoverable instead of bubbling out of
+        // the batch and skipping the remaining locations.
+        await finishTrip(snapshot, tripId, point).catch(() => undefined);
       }
       break;
     }
   }
 }
 
+async function flushWithRecovery(snapshot: Snapshot, tripId: string, context: string): Promise<void> {
+  try {
+    await flushPendingPoints(snapshot, tripId);
+  } catch (error) {
+    if (isMissingActiveTripError(error)) {
+      log(snapshot, "Serveren manglet aktiv tur. Nullstilte lokal turstatus.", "warn");
+      resetActiveTripState(snapshot);
+      return;
+    }
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    log(snapshot, `${context}${message}`, "error");
+  }
+}
+
+/** iOS delivers batches that are not guaranteed to be ordered. */
+function sortLocations(locations: Location.LocationObject[]): Location.LocationObject[] {
+  return [...locations].sort((a, b) => a.timestamp - b.timestamp);
+}
+
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) {
-    await appendLog(`Bakgrunnsoppgave feilet: ${error.message}`, "error");
+    await serialize(async () => {
+      const snapshot = await loadSnapshot();
+      log(snapshot, `Bakgrunnsoppgave feilet: ${error.message}`, "error");
+      await saveSnapshot(snapshot);
+    });
     console.error("[TripTracker]", error);
     return;
   }
 
-  const { locations } = data as { locations: Location.LocationObject[] };
-  try {
+  const { locations } = (data ?? {}) as { locations?: Location.LocationObject[] };
+  if (!locations || locations.length === 0) return;
+
+  await serialize(async () => {
     await markTaskHeartbeat();
-    for (const loc of locations) {
-      await handleLocation(loc);
+    const snapshot = await loadSnapshot();
+    try {
+      for (const loc of sortLocations(locations)) {
+        await handleLocation(snapshot, loc);
+      }
+    } catch (taskError) {
+      const message =
+        taskError instanceof Error && taskError.message ? `: ${taskError.message}` : ".";
+      log(snapshot, `Feil under behandling av posisjon${message}`, "error");
+      console.error("[TripTracker]", taskError);
+    } finally {
+      // Always persist: a mid-batch failure must not discard the points and
+      // state changes the earlier locations already produced.
+      await saveSnapshot(snapshot);
     }
-  } catch (taskError) {
-    await appendLog(
-      `Feil under behandling av posisjon${taskError instanceof Error && taskError.message ? `: ${taskError.message}` : "."}`,
-      "error"
-    );
-    console.error("[TripTracker]", taskError);
-  }
+  });
 });
 
 export async function requestPermissions(): Promise<boolean> {
   const { status: notifStatus } = await Notifications.getPermissionsAsync();
   if (notifStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== "granted") {
-      await appendLog("Mangler notifikasjonstillatelse — foreground service vil ikke vises.", "warn");
-    }
+    await Notifications.requestPermissionsAsync();
   }
 
   const fgStatus = await Location.getForegroundPermissionsAsync();
   const fg =
-    fgStatus.status === "granted"
-      ? fgStatus
-      : await Location.requestForegroundPermissionsAsync();
-  if (fg.status !== "granted") {
-    await setStartReason("Gi appen tilgang til posisjon mens den er i bruk.");
-    await appendLog("Mangler forgrunnslokasjon.", "warn");
-    return false;
+    fgStatus.status === "granted" ? fgStatus : await Location.requestForegroundPermissionsAsync();
+
+  const snapshot = await loadSnapshot();
+  try {
+    if (fg.status !== "granted") {
+      setStartReason(snapshot, "Gi appen tilgang til posisjon mens den er i bruk.");
+      log(snapshot, "Mangler forgrunnslokasjon.", "warn");
+      return false;
+    }
+
+    const bgStatus = await Location.getBackgroundPermissionsAsync();
+    const bg =
+      bgStatus.status === "granted" ? bgStatus : await Location.requestBackgroundPermissionsAsync();
+
+    if (bg.status !== "granted") {
+      setStartReason(snapshot, "Gi appen bakgrunnslokasjon for automatisk turstart.");
+      log(snapshot, "Mangler bakgrunnslokasjon.", "warn");
+    } else {
+      setStartReason(snapshot, "Tillatelser er klare. Telefonen kan starte tur automatisk.");
+      log(snapshot, "Bakgrunnslokasjon er klar.");
+    }
+
+    return bg.status === "granted";
+  } finally {
+    await saveSnapshot(snapshot);
   }
-
-  const bgStatus = await Location.getBackgroundPermissionsAsync();
-  const bg =
-    bgStatus.status === "granted"
-      ? bgStatus
-      : await Location.requestBackgroundPermissionsAsync();
-
-  if (bg.status !== "granted") {
-    await setStartReason("Gi appen bakgrunnslokasjon for automatisk turstart.");
-    await appendLog("Mangler bakgrunnslokasjon.", "warn");
-  } else {
-    await setStartReason("Tillatelser er klare. Telefonen kan starte tur automatisk.");
-    await appendLog("Bakgrunnslokasjon er klar.");
-  }
-
-  return bg.status === "granted";
 }
 
 export async function ensureTrackingConfigured(): Promise<boolean> {
@@ -755,75 +908,76 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
   const granted = await requestPermissions();
   if (!granted) return false;
 
-  const providerStatus = await Location.getProviderStatusAsync().catch(() => null);
-  if (providerStatus && !providerStatus.locationServicesEnabled) {
-    await setStartReason("Skru på posisjonstjenester på telefonen.");
-    await appendLog("Posisjonstjenester er av på telefonen.", "warn");
-  }
+  return serialize(async () => {
+    const snapshot = await loadSnapshot();
+    try {
+      const providerStatus = await Location.getProviderStatusAsync().catch(() => null);
+      if (providerStatus && !providerStatus.locationServicesEnabled) {
+        setStartReason(snapshot, "Skru på posisjonstjenester på telefonen.");
+        log(snapshot, "Posisjonstjenester er av på telefonen.", "warn");
+      }
 
-  const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  if (!isRunning) {
-    await startBackgroundLocationUpdates();
-    await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
-    await appendLog("Bakgrunnssporing ble startet.");
-  } else {
-    if (Platform.OS === "android") {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
-      await startBackgroundLocationUpdates();
-      await setStartReason("Bakgrunnssporing ble startet på nytt. Telefonen følger med etter ny tur.");
-      await appendLog("Bakgrunnssporing ble startet på nytt for å gjenopprette bakgrunnsvarsel.");
-    } else {
-      await setStartReason("Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
-      await appendLog("Bakgrunnssporing er allerede aktiv.");
-    }
-  }
-
-  await closeStaleTrip(Date.now()).catch(() => {});
-
-  const tripId = await get(ACTIVE_TRIP_KEY);
-  if (tripId) {
-    await flushPendingPoints(tripId).catch(async (error) => {
-      await appendLog(
-        `Kunne ikke sende ventende punkter ved oppstart${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
-        "error"
+      const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
+        () => false
       );
-    });
-  }
+      if (!isRunning) {
+        await startBackgroundLocationUpdates();
+        setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
+        log(snapshot, "Bakgrunnssporing ble startet.");
+      } else if (Platform.OS === "android") {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
+        await startBackgroundLocationUpdates();
+        setStartReason(snapshot, "Bakgrunnssporing ble startet på nytt. Telefonen følger med etter ny tur.");
+        log(snapshot, "Bakgrunnssporing ble startet på nytt for å gjenopprette bakgrunnsvarsel.");
+      } else {
+        setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
+        log(snapshot, "Bakgrunnssporing er allerede aktiv.");
+      }
 
-  return true;
+      await closeStaleTrip(snapshot, Date.now()).catch(() => {});
+
+      if (snapshot.activeTripId) {
+        await flushWithRecovery(snapshot, snapshot.activeTripId, "Kunne ikke sende ventende punkter ved oppstart");
+      }
+
+      return true;
+    } finally {
+      await saveSnapshot(snapshot);
+    }
+  });
 }
 
 export async function syncActiveTrip(): Promise<void> {
-  await closeStaleTrip(Date.now());
-  const tripId = await get(ACTIVE_TRIP_KEY);
-  if (!tripId) {
-    await appendLog("Ingen aktiv tur å synkronisere.", "warn");
-    return;
-  }
-  try {
-    await flushPendingPoints(tripId);
-    await appendLog("Manuell synkronisering fullfort.");
-  } catch (error) {
-    if (isMissingActiveTripError(error)) {
-      await appendLog("Aktiv tur fantes ikke lenger på serveren. Lokal turstatus ble nullstilt.", "warn");
-      await resetActiveTripState();
-      return;
+  return serialize(async () => {
+    const snapshot = await loadSnapshot();
+    try {
+      await closeStaleTrip(snapshot, Date.now());
+      const tripId = snapshot.activeTripId;
+      if (!tripId) {
+        log(snapshot, "Ingen aktiv tur å synkronisere.", "warn");
+        return;
+      }
+
+      try {
+        await flushPendingPoints(snapshot, tripId);
+        log(snapshot, "Manuell synkronisering fullført.");
+      } catch (error) {
+        if (isMissingActiveTripError(error)) {
+          log(snapshot, "Aktiv tur fantes ikke lenger på serveren. Lokal turstatus ble nullstilt.", "warn");
+          resetActiveTripState(snapshot);
+          return;
+        }
+        const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+        log(snapshot, `Manuell synkronisering feilet${message}`, "error");
+        throw error;
+      }
+    } finally {
+      await saveSnapshot(snapshot);
     }
-    await appendLog(
-      `Manuell synkronisering feilet${error instanceof Error && error.message ? `: ${error.message}` : "."}`,
-      "error"
-    );
-    throw error;
-  }
+  });
 }
 
 export async function startTripManually(): Promise<void> {
-  const tripId = await get(ACTIVE_TRIP_KEY);
-  if (tripId) {
-    await setStartReason("Du har allerede en aktiv tur.");
-    return;
-  }
-
   const granted = await requestPermissions();
   if (!granted) {
     throw new Error("Bakgrunnslokasjon mangler.");
@@ -832,106 +986,136 @@ export async function startTripManually(): Promise<void> {
   const location = await Location.getCurrentPositionAsync({
     accuracy: Location.Accuracy.High,
   });
-  const point = toGpsPoint(location);
-  const started = await startTrip(point);
 
-  if (!started) {
-    throw new Error("Kunne ikke starte tur manuelt.");
-  }
+  return serialize(async () => {
+    const snapshot = await loadSnapshot();
+    try {
+      if (snapshot.activeTripId) {
+        setStartReason(snapshot, "Du har allerede en aktiv tur.");
+        return;
+      }
 
-  await setLastTelemetry(point);
-  await setStartReason("Tur startet manuelt og registreres nå.");
-  await appendLog("Tur startet manuelt.");
+      const point = toGpsPoint(location);
+      const started = await startTrip(snapshot, point);
+      if (!started) {
+        throw new Error("Kunne ikke starte tur manuelt.");
+      }
+
+      snapshot.lastSpeed = point.speed;
+      snapshot.lastAccuracy = point.accuracy;
+      touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY);
+      setStartReason(snapshot, "Tur startet manuelt og registreres nå.");
+      log(snapshot, "Tur startet manuelt.");
+    } finally {
+      await saveSnapshot(snapshot);
+    }
+  });
 }
 
 export async function stopActiveTripManually(): Promise<void> {
-  const tripId = await get(ACTIVE_TRIP_KEY);
-  if (!tripId) {
-    await setStartReason("Ingen aktiv tur å stoppe.");
-    throw new Error("Ingen aktiv tur å stoppe.");
-  }
-
-  const fallbackPoint = await getLastPoint();
-  let point = fallbackPoint;
-
+  let fresh: Location.LocationObject | null = null;
   try {
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
-    point = toGpsPoint(location);
+    fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
   } catch {
     // Fall back to the latest known point if a fresh reading is unavailable.
   }
 
-  if (!point) {
-    throw new Error("Fant ikke posisjon for å avslutte turen.");
-  }
+  return serialize(async () => {
+    const snapshot = await loadSnapshot();
+    try {
+      const tripId = snapshot.activeTripId;
+      if (!tripId) {
+        setStartReason(snapshot, "Ingen aktiv tur å stoppe.");
+        throw new Error("Ingen aktiv tur å stoppe.");
+      }
 
-  await finishTrip(tripId, point);
-  await setStartReason("Tur ble stoppet manuelt.");
-  await appendLog("Tur stoppet manuelt.");
+      const point = fresh ? toGpsPoint(fresh) : snapshot.lastPoint;
+      if (!point) {
+        throw new Error("Fant ikke posisjon for å avslutte turen.");
+      }
+
+      await finishTrip(snapshot, tripId, point);
+      setStartReason(snapshot, "Tur ble stoppet manuelt.");
+      log(snapshot, "Tur stoppet manuelt.");
+    } finally {
+      await saveSnapshot(snapshot);
+    }
+  });
 }
 
 export async function stopTracking(): Promise<void> {
-  const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  if (isRunning) {
-    await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-  }
+  return serialize(async () => {
+    const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
+      () => false
+    );
+    if (isRunning) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    }
 
-  await clear(STATE_KEY);
-  await clear(ACTIVE_TRIP_KEY);
-  await clear(STOP_TIME_KEY);
-  await clear(PENDING_POINTS_KEY);
-  await clear(LAST_POINT_KEY);
-  await clear(POSITION_WINDOW_KEY);
-  await clear(LAST_SPEED_KEY);
-  await clear(LAST_ACCURACY_KEY);
-  await clear(START_CANDIDATE_COUNT_KEY);
-  await clear(START_FAIL_COUNT_KEY);
-  await appendLog("Bakgrunnssporing ble stoppet.", "warn");
-  await setStartReason("Bakgrunnssporing er stoppet.");
+    const snapshot = await loadSnapshot();
+    resetActiveTripState(snapshot);
+    snapshot.lastSpeed = null;
+    snapshot.lastAccuracy = null;
+    touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY);
+    log(snapshot, "Bakgrunnssporing ble stoppet.", "warn");
+    setStartReason(snapshot, "Bakgrunnssporing er stoppet.");
+    await saveSnapshot(snapshot);
+  });
+}
+
+export async function getSelectedVehicleId(): Promise<string | null> {
+  return AsyncStorage.getItem(SELECTED_VEHICLE_KEY);
+}
+
+/** Applied to the next trip that starts; an active trip keeps the vehicle it began with. */
+export async function setSelectedVehicleId(vehicleId: string | null): Promise<void> {
+  if (vehicleId) await AsyncStorage.setItem(SELECTED_VEHICLE_KEY, vehicleId);
+  else await AsyncStorage.removeItem(SELECTED_VEHICLE_KEY);
 }
 
 export async function getTrackerState(): Promise<TrackerDiagnostics> {
-  const trackingEnabled = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
-  const [notificationPermission, availableNotificationChannels, foregroundPermission, backgroundPermission, providerStatus, lastPoint, lastTaskAt, lastSyncAt, token, recentEvents, lastSpeedKmh, lastAccuracyMeters, startCandidateCount, startReason] =
-    await Promise.all([
-      Notifications.getPermissionsAsync()
-        .then((result) => result.status)
-        .catch(() => "undetermined" as Notifications.PermissionStatus),
-      Platform.OS === "android"
-        ? Notifications.getNotificationChannelsAsync()
-            .then((channels) =>
-              channels.map((channel) => ({
-                id: channel.id,
-                name: channel.name,
-                importance: channel.importance,
-              }))
-            )
-            .catch(() => [])
-        : Promise.resolve([]),
-      Location.getForegroundPermissionsAsync()
-        .then((result) => result.status)
-        .catch(() => "undetermined" as Location.PermissionStatus),
-      Location.getBackgroundPermissionsAsync()
-        .then((result) => result.status)
-        .catch(() => "undetermined" as Location.PermissionStatus),
-      Location.getProviderStatusAsync().catch(() => null),
-      getLastPoint(),
-      get(LAST_TASK_AT_KEY),
-      get(LAST_SYNC_AT_KEY),
-      getToken(),
-      getRecentEvents(),
-      getLastSpeedKmh(),
-      getLastAccuracyMeters(),
-      getStartCandidateCount(),
-      getStartReason(),
-    ]);
+  const [
+    snapshot,
+    trackingEnabled,
+    notificationPermission,
+    availableNotificationChannels,
+    foregroundPermission,
+    backgroundPermission,
+    providerStatus,
+    lastTaskAt,
+    token,
+  ] = await Promise.all([
+    loadSnapshot(),
+    Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false),
+    Notifications.getPermissionsAsync()
+      .then((result) => result.status)
+      .catch(() => "undetermined" as Notifications.PermissionStatus),
+    Platform.OS === "android"
+      ? Notifications.getNotificationChannelsAsync()
+          .then((channels) =>
+            channels.map((channel) => ({
+              id: channel.id,
+              name: channel.name,
+              importance: channel.importance,
+            }))
+          )
+          .catch(() => [])
+      : Promise.resolve([]),
+    Location.getForegroundPermissionsAsync()
+      .then((result) => result.status)
+      .catch(() => "undetermined" as Location.PermissionStatus),
+    Location.getBackgroundPermissionsAsync()
+      .then((result) => result.status)
+      .catch(() => "undetermined" as Location.PermissionStatus),
+    Location.getProviderStatusAsync().catch(() => null),
+    AsyncStorage.getItem(LAST_TASK_AT_KEY),
+    getToken(),
+  ]);
 
   return {
-    state: ((await get(STATE_KEY)) ?? "IDLE") as TrackerState,
-    activeTripId: await get(ACTIVE_TRIP_KEY),
-    pendingPoints: (await getPendingPoints()).length,
+    state: snapshot.state,
+    activeTripId: snapshot.activeTripId,
+    pendingPoints: snapshot.pendingPoints.length,
     trackingEnabled,
     hasToken: Boolean(token),
     notificationPermission,
@@ -941,13 +1125,14 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     locationServicesEnabled: providerStatus?.locationServicesEnabled ?? false,
     foregroundPermission,
     backgroundPermission,
-    lastPointTimestamp: lastPoint?.timestamp ?? null,
+    lastPointTimestamp: snapshot.lastPoint?.timestamp ?? null,
     lastTaskAt,
-    lastSyncAt,
-    lastSpeedKmh,
-    lastAccuracyMeters,
-    startCandidateCount,
-    startReason,
-    recentEvents,
+    lastSyncAt: snapshot.lastSyncAt,
+    lastSpeedKmh: snapshot.lastSpeed === null ? null : snapshot.lastSpeed * 3.6,
+    lastAccuracyMeters: snapshot.lastAccuracy,
+    startCandidateCount: snapshot.startCandidateCount,
+    startReason: snapshot.startReason,
+    selectedVehicleId: snapshot.selectedVehicleId,
+    recentEvents: snapshot.logEntries,
   };
 }

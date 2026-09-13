@@ -142,6 +142,34 @@ Offentlig server for virkelighetsnær testing:
 corepack pnpm dev:mobile:android:server
 ```
 
+## iPhone
+
+Bygg og installer direkte på en tilkoblet iPhone via Xcode:
+
+```bash
+corepack pnpm --filter @kjorebok/mobile ios:device:server
+```
+
+Det bygger i `Release` mot produksjons-API-et, slik at appen virker frittstående
+uten at Metro kjører på maskinen.
+
+`ios/`-mappen er en lokal `expo prebuild`-artefakt og er ikke sjekket inn.
+Ikke kjør `expo prebuild --clean` uten grunn — signeringsoppsettet
+(`DEVELOPMENT_TEAM`) ligger der og må settes på nytt i Xcode etterpå.
+
+Hvis `pod install` feiler med `Unicode Normalization not appropriate for
+ASCII-8BIT`, mangler shellet UTF-8-locale:
+
+```bash
+export LANG=en_US.UTF-8
+```
+
+List tilkoblede enheter med:
+
+```bash
+xcrun devicectl list devices
+```
+
 ## Android APK
 
 Anbefalt flyt er å la GitHub Actions bygge og publisere Android-APK fra

@@ -26,6 +26,7 @@ const gpsPointSchema = z.object({
 const startTripSchema = z.object({
   startPoint: gpsPointSchema,
   startAddress: z.string().trim().min(1).nullable().optional(),
+  vehicleId: z.string().cuid().optional(),
 });
 
 const addPointSchema = z.object({
@@ -376,6 +377,19 @@ export async function tripRoutes(app: FastifyInstance) {
     return reply.send(renderKjorebokCsv(report));
   });
 
+  // Same report the CSV and PDF are rendered from, so the web UI can show the
+  // numbers before anyone downloads a file.
+  app.get("/trips/report", auth, async (request, reply) => {
+    const query = reportQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: query.error.flatten() });
+
+    const userId = (request.user as any).sub;
+    const report = await buildKjorebokReport(userId, query.data);
+    if (!report) return reply.status(404).send({ error: "Not found" });
+
+    return reply.send(report);
+  });
+
   app.get("/trips/report.pdf", auth, async (request, reply) => {
     const query = reportQuerySchema.safeParse(request.query);
     if (!query.success) return reply.status(400).send({ error: query.error.flatten() });
@@ -440,10 +454,18 @@ export async function tripRoutes(app: FastifyInstance) {
     const body = startTripSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
-    const { startPoint, startAddress } = body.data;
+    const { startPoint, startAddress, vehicleId } = body.data;
 
     const active = await prisma.trip.findFirst({ where: { userId, status: "ACTIVE" } });
     if (active) return reply.status(409).send({ error: "An active trip already exists" });
+
+    // Falls back to the default vehicle so a trip is attributable from the
+    // moment it starts, rather than only after the user edits it afterwards.
+    const vehicle = await prisma.vehicle.findFirst({
+      where: vehicleId ? { id: vehicleId, userId } : { userId, isDefault: true },
+      select: { id: true },
+    });
+    if (vehicleId && !vehicle) return reply.status(400).send({ error: "Ukjent kjøretøy" });
 
     const trip = await prisma.trip.create({
       data: {
@@ -451,6 +473,7 @@ export async function tripRoutes(app: FastifyInstance) {
         startedAt: new Date(startPoint.timestamp),
         startAddress: startAddress ?? null,
         route: [startPoint],
+        vehicleId: vehicle?.id ?? null,
       },
     });
     return reply.status(201).send(trip);

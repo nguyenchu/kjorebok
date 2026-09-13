@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { router } from "expo-router";
 import { useAuth } from "@/lib/auth";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
@@ -75,6 +76,15 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      <TouchableOpacity
+        style={styles.navButton}
+        onPress={() => router.push("/vehicles")}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.navButtonText}>Mine kjøretøy</Text>
+        <Text style={styles.navButtonChevron}>›</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.8}>
         <Text style={styles.logoutText}>Logg ut</Text>
       </TouchableOpacity>
@@ -130,6 +140,22 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 15, color: "#64748b" },
   rowValue: { fontSize: 15, fontWeight: "600", color: "#0f172a" },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: "#e2e8f0" },
+  navButton: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  navButtonText: { fontSize: 16, fontWeight: "600", color: "#0f172a" },
+  navButtonChevron: { fontSize: 22, color: "#94a3b8", lineHeight: 22 },
   logoutButton: {
     backgroundColor: "#fff",
     borderRadius: 14,

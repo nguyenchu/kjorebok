@@ -11,6 +11,7 @@
     "android:device:server": "EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api expo run:android --device",
     "ios": "expo run:ios",
     "ios:device": "expo run:ios --device",
+    "ios:device:server": "EXPO_PUBLIC_API_URL=https://kjorebok.nguyenchu.com/api expo run:ios --device --configuration Release",
     "build:preview": "eas build --profile preview",
     "build:android:apk": "eas build -p android --profile preview",
     "build:android:production": "eas build -p android --profile production",
