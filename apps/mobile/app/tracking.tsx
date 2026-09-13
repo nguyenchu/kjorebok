@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, Linking } from "react-native";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { router } from "expo-router";
+import { router, Stack } from "expo-router";
 import Constants from "expo-constants";
 import {
   ensureTrackingConfigured,
   getTrackerState,
   syncActiveTrip,
+  type TrackerDiagnostics,
 } from "@/lib/tripTracker";
+import { assessTrackerHealth } from "@/lib/trackerHealth";
 import { formatDistanceToNowStrict } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -24,56 +25,12 @@ function formatRelativeTime(timestamp: string | null): string {
   }
 }
 
-function isOlderThan(timestamp: string | null, ms: number): boolean {
-  if (!timestamp) return true;
-
-  const time = new Date(timestamp).getTime();
-  if (!Number.isFinite(time)) return true;
-  return Date.now() - time > ms;
-}
-
 export default function TrackingScreen() {
-  const tabBarHeight = useBottomTabBarHeight();
-  const [tracking, setTracking] = useState(false);
-  const [state, setState] = useState("IDLE");
-  const [activeTripId, setActiveTripId] = useState<string | null>(null);
-  const [pendingPoints, setPendingPoints] = useState(0);
-  const [hasToken, setHasToken] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState("undetermined");
-  const [locationServicesEnabled, setLocationServicesEnabled] = useState(false);
-  const [foregroundPermission, setForegroundPermission] = useState("undetermined");
-  const [backgroundPermission, setBackgroundPermission] = useState("undetermined");
-  const [lastPointTimestamp, setLastPointTimestamp] = useState<string | null>(null);
-  const [lastTaskAt, setLastTaskAt] = useState<string | null>(null);
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
-  const [lastSpeedKmh, setLastSpeedKmh] = useState<number | null>(null);
-  const [lastAccuracyMeters, setLastAccuracyMeters] = useState<number | null>(null);
-  const [startCandidateCount, setStartCandidateCount] = useState(0);
-  const [startReason, setStartReason] = useState("Telefonen venter på tydelig bevegelse.");
-  const [recentEvents, setRecentEvents] = useState<
-    Array<{ timestamp: string; level: "info" | "warn" | "error"; message: string }>
-  >([]);
+  const [tracker, setTracker] = useState<TrackerDiagnostics | null>(null);
   const [showDetails, setShowDetails] = useState(false);
 
   const refresh = async () => {
-    const tracker = await getTrackerState();
-    setTracking(tracker.trackingEnabled);
-    setState(tracker.state);
-    setActiveTripId(tracker.activeTripId);
-    setPendingPoints(tracker.pendingPoints);
-    setHasToken(tracker.hasToken);
-    setNotificationPermission(tracker.notificationPermission);
-    setLocationServicesEnabled(tracker.locationServicesEnabled);
-    setForegroundPermission(tracker.foregroundPermission);
-    setBackgroundPermission(tracker.backgroundPermission);
-    setLastPointTimestamp(tracker.lastPointTimestamp);
-    setLastTaskAt(tracker.lastTaskAt);
-    setLastSyncAt(tracker.lastSyncAt);
-    setLastSpeedKmh(tracker.lastSpeedKmh);
-    setLastAccuracyMeters(tracker.lastAccuracyMeters);
-    setStartCandidateCount(tracker.startCandidateCount);
-    setStartReason(tracker.startReason);
-    setRecentEvents(tracker.recentEvents);
+    setTracker(await getTrackerState());
   };
 
   useEffect(() => {
@@ -106,31 +63,30 @@ export default function TrackingScreen() {
     }
   };
 
-  const needsPermission = foregroundPermission !== "granted" || backgroundPermission !== "granted";
-  const taskSeemsStale = tracking && isOlderThan(lastTaskAt, 20 * 60 * 1000);
-  const needsAttention = !hasToken || !locationServicesEnabled || needsPermission || !tracking || taskSeemsStale;
-  const headline = useMemo(() => {
-    if (!hasToken) return "Du må logge inn";
-    if (!locationServicesEnabled) return "Skru på posisjonstjenester";
-    if (needsPermission) return "Gi tilgang til lokasjon";
-    if (!tracking) return "Aktiver automatisk sporing";
-    if (taskSeemsStale) return "Sporingen trenger oppmerksomhet";
-    if (state === "RECORDING") return "Tur registreres nå";
-    if (pendingPoints > 0) return "Turdata venter på sending";
-    if (activeTripId) return "Tur pågår";
-    return "Klar til automatisk turstart";
-  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, state, taskSeemsStale, tracking]);
+  const tracking = tracker?.trackingEnabled ?? false;
+  const state = tracker?.state ?? "IDLE";
+  const activeTripId = tracker?.activeTripId ?? null;
+  const pendingPoints = tracker?.pendingPoints ?? 0;
+  const hasToken = tracker?.hasToken ?? false;
+  const notificationPermission = tracker?.notificationPermission ?? "undetermined";
+  const locationServicesEnabled = tracker?.locationServicesEnabled ?? false;
+  const foregroundPermission = tracker?.foregroundPermission ?? "undetermined";
+  const backgroundPermission = tracker?.backgroundPermission ?? "undetermined";
+  const lastPointTimestamp = tracker?.lastPointTimestamp ?? null;
+  const lastTaskAt = tracker?.lastTaskAt ?? null;
+  const lastSyncAt = tracker?.lastSyncAt ?? null;
+  const lastSpeedKmh = tracker?.lastSpeedKmh ?? null;
+  const lastAccuracyMeters = tracker?.lastAccuracyMeters ?? null;
+  const startCandidateCount = tracker?.startCandidateCount ?? 0;
+  const startReason = tracker?.startReason ?? "Telefonen venter på tydelig bevegelse.";
+  const recentEvents = tracker?.recentEvents ?? [];
 
-  const summary = useMemo(() => {
-    if (!hasToken) return "Logg inn igjen hvis sesjonen har utløpt. Uten innlogging kan ikke appen lagre eller sende turer.";
-    if (!locationServicesEnabled) return "Telefonens posisjonstjenester er av. Skru dem på for at automatisk turstart skal virke.";
-    if (needsPermission) return "Appen trenger lokasjonstilgang i bakgrunnen for å kunne oppdage turer automatisk.";
-    if (!tracking) return "Automatisk sporing er ikke slått på ennå. Aktiver den én gang, så holder appen seg klar i bakgrunnen.";
-    if (taskSeemsStale) return "Telefonen har ikke sendt noen fersk bakgrunnsoppdatering på en stund. Sjekk batterisparing hvis dette skjer ofte.";
-    if (pendingPoints > 0) return "Det finnes turdata som ikke er sendt ennå. De blir sendt automatisk når forbindelsen er klar.";
-    if (!activeTripId) return "Appen følger med i bakgrunnen og starter tur automatisk når den ser tydelig bevegelse.";
-    return "En tur er aktiv nå. Appen følger med til turen stopper eller blir sendt.";
-  }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, startReason, taskSeemsStale, tracking]);
+  const health = tracker ? assessTrackerHealth(tracker) : null;
+  const needsAttention = health?.needsAttention ?? false;
+  const needsPermission = health?.needsPermission ?? false;
+  const taskSeemsStale = health?.taskSeemsStale ?? false;
+  const headline = health?.headline ?? "Henter status…";
+  const summary = health?.summary ?? "Leser av sporingsstatus fra telefonen.";
 
   const detailHint = useMemo(() => {
     if (pendingPoints > 0) return `${pendingPoints} punkt venter fortsatt på å bli sendt.`;
@@ -194,10 +150,19 @@ export default function TrackingScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 24 }]}
-    >
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          title: "Sporing",
+          headerBackTitle: "Profil",
+          headerStyle: { backgroundColor: "#eef6ff" },
+          headerShadowVisible: false,
+          headerTintColor: "#0f172a",
+          headerTitleStyle: { fontWeight: "700", fontSize: 18, color: "#0f172a" },
+        }}
+      />
+
       <View style={styles.stateCard}>
         <Text style={styles.stateLabel}>{headline}</Text>
         <Text style={styles.statusMeta}>{summary}</Text>

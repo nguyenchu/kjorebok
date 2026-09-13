@@ -43,13 +43,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="tracking"
-        options={{
-          title: "Sporing",
-          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 22 }}>📍</Text>,
-        }}
-      />
-      <Tabs.Screen
         name="profile"
         options={{
           title: "Profil",

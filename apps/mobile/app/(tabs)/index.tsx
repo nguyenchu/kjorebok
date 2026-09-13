@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { api } from "@/lib/api";
+import { getTrackerState } from "@/lib/tripTracker";
+import { assessTrackerHealth, type TrackerHealth } from "@/lib/trackerHealth";
 import type { TripMode, TripPurpose, TripSummary } from "@kjorebok/shared";
 import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek, subDays } from "date-fns";
 import { nb } from "date-fns/locale";
@@ -218,6 +220,23 @@ export default function TripsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [selectedDayKey, setSelectedDayKey] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [health, setHealth] = useState<TrackerHealth | null>(null);
+
+  // Tracking lives under Profil now, so a problem there has to surface here —
+  // otherwise a silently stopped tracker is only noticed by the missing trips.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      getTrackerState()
+        .then((tracker) => {
+          if (active) setHealth(assessTrackerHealth(tracker));
+        })
+        .catch(() => {});
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
 
   const handleDelete = useCallback(async (id: string) => {
     try {
@@ -303,7 +322,18 @@ export default function TripsScreen() {
       contentContainerStyle={[styles.list, { paddingBottom: tabBarHeight + 24 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListHeaderComponent={
-        grouped.length > 0 ? (
+        <>
+          {health?.needsAttention && (
+            <TouchableOpacity
+              style={styles.warningBanner}
+              onPress={() => router.push("/tracking")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.warningBannerTitle}>{health.headline}</Text>
+              <Text style={styles.warningBannerText}>{health.summary}</Text>
+            </TouchableOpacity>
+          )}
+          {grouped.length > 0 ? (
           <View style={styles.header}>
             <View style={styles.paginationRow}>
               <TouchableOpacity
@@ -358,7 +388,8 @@ export default function TripsScreen() {
             </View>
             {selectedGroup && <Text style={styles.dayHeader}>{formatDayHeader(selectedGroup.day)}</Text>}
           </View>
-        ) : null
+          ) : null}
+        </>
       }
       ListEmptyComponent={
         grouped.length > 0 && selectedGroup ? (
@@ -390,6 +421,16 @@ export default function TripsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
   list: { padding: 16, paddingBottom: 32 },
+  warningBanner: {
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  warningBannerTitle: { fontSize: 15, fontWeight: "700", color: "#b91c1c", marginBottom: 4 },
+  warningBannerText: { fontSize: 13, color: "#7f1d1d", lineHeight: 18 },
   header: { marginBottom: 16 },
   paginationRow: {
     flexDirection: "row",

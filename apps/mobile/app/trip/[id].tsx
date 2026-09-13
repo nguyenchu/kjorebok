@@ -55,6 +55,9 @@ export default function TripDetailScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
+          // The root stack hides headers, so this screen has to ask for one —
+          // without it there is no back button out of the map.
+          headerShown: true,
           title: trip
             ? `${trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start"} → ${trip.endPlace?.label ?? trip.endAddress ?? "Ukjent slutt"}`
             : "Tur",

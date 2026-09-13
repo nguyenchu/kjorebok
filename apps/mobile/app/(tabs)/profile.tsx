@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/lib/auth";
+import { getTrackerState } from "@/lib/tripTracker";
+import { assessTrackerHealth, type TrackerHealth } from "@/lib/trackerHealth";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -10,6 +12,22 @@ export default function ProfileScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const { user, logout, deleteAccount } = useAuth();
   const [deleting, setDeleting] = useState(false);
+  const [health, setHealth] = useState<TrackerHealth | null>(null);
+
+  // Refreshed on focus so returning from the tracking screen shows the new state.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      getTrackerState()
+        .then((tracker) => {
+          if (active) setHealth(assessTrackerHealth(tracker));
+        })
+        .catch(() => {});
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
 
   const confirmDeleteAccount = () => {
     if (deleting) return;
@@ -75,6 +93,30 @@ export default function ProfileScreen() {
           </Text>
         </View>
       </View>
+
+      <Text style={styles.sectionHeading}>Innstillinger</Text>
+
+      <TouchableOpacity
+        style={styles.navButton}
+        onPress={() => router.push("/tracking")}
+        activeOpacity={0.8}
+      >
+        <View style={styles.navButtonTextGroup}>
+          <Text style={styles.navButtonText}>Sporing</Text>
+          {health && (
+            <View style={styles.statusRow}>
+              <View
+                style={[
+                  styles.statusDot,
+                  health.needsAttention ? styles.statusDotWarning : styles.statusDotOk,
+                ]}
+              />
+              <Text style={styles.navButtonMeta}>{health.shortStatus}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.navButtonChevron}>›</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.navButton}
@@ -154,8 +196,23 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 1,
   },
+  navButtonTextGroup: { flex: 1 },
   navButtonText: { fontSize: 16, fontWeight: "600", color: "#0f172a" },
+  navButtonMeta: { fontSize: 13, color: "#64748b" },
   navButtonChevron: { fontSize: 22, color: "#94a3b8", lineHeight: 22 },
+  sectionHeading: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 10,
+    marginLeft: 4,
+  },
+  statusRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
+  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+  statusDotOk: { backgroundColor: "#22c55e" },
+  statusDotWarning: { backgroundColor: "#ef4444" },
   logoutButton: {
     backgroundColor: "#fff",
     borderRadius: 14,

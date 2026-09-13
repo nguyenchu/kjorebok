@@ -133,6 +133,8 @@ export default function VehiclesScreen() {
         options={{
           headerShown: true,
           title: "Mine kjøretøy",
+          headerBackTitle: "Profil",
+          headerShadowVisible: false,
           headerStyle: { backgroundColor: "#eef6ff" },
           headerTintColor: "#0f172a",
           headerTitleStyle: { fontWeight: "700" },
