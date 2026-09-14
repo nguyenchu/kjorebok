@@ -31,7 +31,15 @@ const ROUTE_GAP_TOLERANCE_MS = 60 * 1000;
 const MIN_ROUTE_POINT_DISTANCE_METERS = 5;
 // Windowed motion detection constants
 const MOVEMENT_WINDOW_MS = 60 * 1000;
-const STATIONARY_WINDOW_MS = 30 * 1000;
+/**
+ * Must stay wider than SUSTAINED_MIN_AGE_MS. Samples are filtered to this
+ * window and then required to span SUSTAINED_MIN_AGE_MS; when the two were
+ * both 30 s that could only hold if the oldest sample landed exactly on the
+ * cutoff millisecond. Real GPS timestamps never line up that way, so the span
+ * came out just under the threshold every time and a stopped car was never
+ * recognised as stopped — trips stayed open until something else closed them.
+ */
+const STATIONARY_WINDOW_MS = 45 * 1000;
 const SUSTAINED_MIN_AGE_MS = 30 * 1000;
 const SUSTAINED_MOVE_DISTANCE_METERS = 30;
 const STATIONARY_MAX_SPREAD_METERS = 15;
@@ -58,6 +66,7 @@ const START_REASON_KEY = "tracker_start_reason";
 const START_FAIL_COUNT_KEY = "tracker_start_fail_count";
 const LAST_ROUTE_POINT_AT_KEY = "tracker_last_route_point_at";
 const SELECTED_VEHICLE_KEY = "tracker_selected_vehicle";
+const LOCATION_MODE_KEY = "tracker_location_mode";
 const MAX_START_FAIL_COUNT = 6;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
@@ -78,6 +87,7 @@ const SNAPSHOT_KEYS = [
   START_FAIL_COUNT_KEY,
   LAST_ROUTE_POINT_AT_KEY,
   SELECTED_VEHICLE_KEY,
+  LOCATION_MODE_KEY,
 ] as const;
 
 const DEFAULT_START_REASON = "Telefonen venter på tydelig bevegelse.";
@@ -150,6 +160,8 @@ interface Snapshot {
   startFailCount: number;
   lastRoutePointAt: number | null;
   selectedVehicleId: string | null;
+  /** Last applied location profile, so a restart is only paid for on change. */
+  locationMode: LocationMode | null;
   dirty: Set<string>;
 }
 
@@ -218,6 +230,7 @@ async function loadSnapshot(): Promise<Snapshot> {
     startFailCount: parseNumber(read(START_FAIL_COUNT_KEY)) ?? 0,
     lastRoutePointAt: parseNumber(read(LAST_ROUTE_POINT_AT_KEY)),
     selectedVehicleId: read(SELECTED_VEHICLE_KEY),
+    locationMode: (read(LOCATION_MODE_KEY) as LocationMode | null) ?? null,
     dirty: new Set(),
   };
 }
@@ -254,6 +267,8 @@ function serializeValue(snapshot: Snapshot, key: string): string | null {
       return snapshot.lastRoutePointAt === null ? null : String(snapshot.lastRoutePointAt);
     case SELECTED_VEHICLE_KEY:
       return snapshot.selectedVehicleId;
+    case LOCATION_MODE_KEY:
+      return snapshot.locationMode;
     default:
       return null;
   }
@@ -544,11 +559,30 @@ async function ensureNotificationChannel(): Promise<void> {
   }
 }
 
-async function startBackgroundLocationUpdates(): Promise<void> {
+/**
+ * While a trip is running the distance filter has to be off. iOS maps
+ * `distanceInterval` to CLLocationManager.distanceFilter and ignores
+ * `timeInterval` entirely, so any non-zero filter means a parked car — which
+ * never moves that far — stops producing locations at all. `handleLocation`
+ * then never runs again, and since both the stop confirmation and
+ * `closeStaleTrip` live inside it, the trip could only be closed half an hour
+ * later by the app being reopened or by the server's cleanup. Trips got the
+ * wrong end time, and driving again within that window merged two trips into
+ * one.
+ *
+ * Filtering costs nothing while actually driving anyway: at 80 km/h the GPS fix
+ * rate is the real limit, not the 10 m filter. Idle keeps a filter purely to
+ * save battery — there we only need to notice that movement has begun.
+ */
+type LocationMode = "idle" | "active";
+
+const IDLE_DISTANCE_INTERVAL_METERS = 20;
+
+async function startBackgroundLocationUpdates(mode: LocationMode): Promise<void> {
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
     accuracy: Location.Accuracy.High,
-    timeInterval: 3000,
-    distanceInterval: 10,
+    timeInterval: mode === "active" ? 2000 : 10000,
+    distanceInterval: mode === "active" ? 0 : IDLE_DISTANCE_INTERVAL_METERS,
     showsBackgroundLocationIndicator: true,
     // Without these iOS decides on its own that the user has stopped, pauses
     // location updates, and never resumes them — the app then misses every
@@ -560,6 +594,25 @@ async function startBackgroundLocationUpdates(): Promise<void> {
       notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
     },
   });
+}
+
+function modeForState(state: TrackerState): LocationMode {
+  return state === "RECORDING" || state === "DETECTING_STOP" ? "active" : "idle";
+}
+
+/** Restarts location updates only when the mode actually changes. */
+async function applyLocationMode(snapshot: Snapshot): Promise<void> {
+  const wanted = modeForState(snapshot.state);
+  if (snapshot.locationMode === wanted) return;
+
+  try {
+    await startBackgroundLocationUpdates(wanted);
+    snapshot.locationMode = wanted;
+    touch(snapshot, LOCATION_MODE_KEY);
+  } catch (error) {
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    log(snapshot, `Kunne ikke bytte posisjonsmodus${message}`, "warn");
+  }
 }
 
 async function startTrip(snapshot: Snapshot, point: GpsPoint): Promise<boolean> {
@@ -860,6 +913,9 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       log(snapshot, `Feil under behandling av posisjon${message}`, "error");
       console.error("[TripTracker]", taskError);
     } finally {
+      // Once per batch rather than per location: the filter only needs to match
+      // the state the batch settled on.
+      await applyLocationMode(snapshot);
       // Always persist: a mid-batch failure must not discard the points and
       // state changes the earlier locations already produced.
       await saveSnapshot(snapshot);
@@ -917,19 +973,27 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
         log(snapshot, "Posisjonstjenester er av på telefonen.", "warn");
       }
 
+      const mode = modeForState(snapshot.state);
       const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
         () => false
       );
       if (!isRunning) {
-        await startBackgroundLocationUpdates();
+        await startBackgroundLocationUpdates(mode);
+        snapshot.locationMode = mode;
+        touch(snapshot, LOCATION_MODE_KEY);
         setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
         log(snapshot, "Bakgrunnssporing ble startet.");
       } else if (Platform.OS === "android") {
         await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
-        await startBackgroundLocationUpdates();
+        await startBackgroundLocationUpdates(mode);
+        snapshot.locationMode = mode;
+        touch(snapshot, LOCATION_MODE_KEY);
         setStartReason(snapshot, "Bakgrunnssporing ble startet på nytt. Telefonen følger med etter ny tur.");
         log(snapshot, "Bakgrunnssporing ble startet på nytt for å gjenopprette bakgrunnsvarsel.");
       } else {
+        // A restart the app did not make (or a crash) can leave the filter out
+        // of step with the state it should match.
+        await applyLocationMode(snapshot);
         setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
         log(snapshot, "Bakgrunnssporing er allerede aktiv.");
       }
@@ -1007,6 +1071,7 @@ export async function startTripManually(): Promise<void> {
       setStartReason(snapshot, "Tur startet manuelt og registreres nå.");
       log(snapshot, "Tur startet manuelt.");
     } finally {
+      await applyLocationMode(snapshot);
       await saveSnapshot(snapshot);
     }
   });
@@ -1038,6 +1103,7 @@ export async function stopActiveTripManually(): Promise<void> {
       setStartReason(snapshot, "Tur ble stoppet manuelt.");
       log(snapshot, "Tur stoppet manuelt.");
     } finally {
+      await applyLocationMode(snapshot);
       await saveSnapshot(snapshot);
     }
   });
@@ -1056,7 +1122,9 @@ export async function stopTracking(): Promise<void> {
     resetActiveTripState(snapshot);
     snapshot.lastSpeed = null;
     snapshot.lastAccuracy = null;
-    touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY);
+    // Updates are off, so no profile is in force — the next start must apply one.
+    snapshot.locationMode = null;
+    touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY, LOCATION_MODE_KEY);
     log(snapshot, "Bakgrunnssporing ble stoppet.", "warn");
     setStartReason(snapshot, "Bakgrunnssporing er stoppet.");
     await saveSnapshot(snapshot);
