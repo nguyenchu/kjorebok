@@ -70,6 +70,45 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const startEditing = (row: { id: string; purposeNote: string | null }) => {
+    setEditingId(row.id);
+    setDraft(row.purposeNote ?? "");
+  };
+
+  const commitEdit = async (rowId: string, original: string | null) => {
+    const next = draft.trim() || null;
+    setEditingId(null);
+    if (next === original) return;
+
+    setSavingId(rowId);
+    try {
+      await api.patch(`/trips/${rowId}`, { purposeNote: next });
+      // Patch the row locally: refetching would rebuild the whole table and
+      // lose your place halfway through filling a month in.
+      setReport((current) =>
+        current
+          ? {
+              ...current,
+              rows: current.rows.map((r) => (r.id === rowId ? { ...r, purposeNote: next } : r)),
+              totals: {
+                ...current.totals,
+                missingPurpose: current.rows.filter(
+                  (r) => r.purpose === "WORK" && !(r.id === rowId ? next : r.purposeNote)
+                ).length,
+              },
+            }
+          : current
+      );
+    } catch (e: any) {
+      alert(e.message ?? "Kunne ikke lagre formålet.");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   useEffect(() => {
     if (authLoading) return;
@@ -395,8 +434,47 @@ export default function ReportPage() {
                         </td>
                         <td style={{ ...cellStyle, whiteSpace: "normal", maxWidth: 200 }}>{row.from}</td>
                         <td style={{ ...cellStyle, whiteSpace: "normal", maxWidth: 200 }}>{row.to}</td>
-                        <td style={{ ...cellStyle, whiteSpace: "normal", maxWidth: 220 }}>
-                          {row.purpose === "WORK" ? row.purposeNote ?? "—" : "Privat"}
+                        <td style={{ ...cellStyle, whiteSpace: "normal", maxWidth: 260 }}>
+                          {row.purpose !== "WORK" ? (
+                            "Privat"
+                          ) : editingId === row.id ? (
+                            <input
+                              autoFocus
+                              value={draft}
+                              onChange={(e) => setDraft(e.target.value)}
+                              onBlur={() => void commitEdit(row.id, row.purposeNote)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.currentTarget.blur();
+                                if (e.key === "Escape") setEditingId(null);
+                              }}
+                              placeholder="f.eks. Kundemøte"
+                              maxLength={200}
+                              style={{
+                                width: "100%",
+                                padding: "0.3rem 0.5rem",
+                                border: "1px solid var(--text)",
+                                borderRadius: "6px",
+                                fontSize: "0.85rem",
+                              }}
+                            />
+                          ) : (
+                            <button
+                              onClick={() => startEditing(row)}
+                              title="Klikk for å skrive inn formål"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                padding: 0,
+                                font: "inherit",
+                                textAlign: "left",
+                                cursor: "text",
+                                color: row.purposeNote ? "var(--text)" : "#b45309",
+                                opacity: savingId === row.id ? 0.4 : 1,
+                              }}
+                            >
+                              {row.purposeNote ?? "Mangler formål"}
+                            </button>
+                          )}
                           {row.client && (
                             <span style={{ color: "var(--text-muted)" }}> · {row.client}</span>
                           )}

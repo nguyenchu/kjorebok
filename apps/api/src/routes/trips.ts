@@ -306,6 +306,9 @@ async function buildKjorebokReport(
       where,
       orderBy: { startedAt: "asc" },
       select: {
+        // The web report edits documentation in place, which needs the row to
+        // say which trip it came from.
+        id: true,
         startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
         ...tripDocumentationSelect,
@@ -328,6 +331,7 @@ async function buildKjorebokReport(
   const rows: KjorebokRow[] = trips.map((trip) => {
     const enriched = attachPlaces(trip, places);
     return {
+      id: enriched.id,
       startedAt: enriched.startedAt,
       endedAt: enriched.endedAt,
       from: enriched.startPlace?.label ?? enriched.startAddress ?? "—",

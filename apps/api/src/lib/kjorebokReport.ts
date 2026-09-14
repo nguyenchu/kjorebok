@@ -6,6 +6,7 @@ import type { MileageAllowance, MileageRate, VehicleType } from "@kjorebok/share
  * to both CSV and PDF, so the two formats can never disagree about a number.
  */
 export interface KjorebokRow {
+  id: string;
   startedAt: Date;
   endedAt: Date | null;
   from: string;

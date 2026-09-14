@@ -8,6 +8,8 @@ import type { VehicleType } from "./vehicle";
  * internally and JSON serialization converts them.
  */
 export interface KjorebokReportRow {
+  /** The trip this row came from, so the report can edit it in place. */
+  id: string;
   startedAt: string;
   endedAt: string | null;
   from: string;
