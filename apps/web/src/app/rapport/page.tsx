@@ -359,14 +359,19 @@ export default function ReportPage() {
               )}
               {totals.missingPurpose > 0 && (
                 <div>
-                  {totals.missingPurpose} yrkestur mangler oppgitt formål. Skatteetaten krever formål for at
-                  turen skal telle som dokumentasjon.
+                  {totals.missingPurpose === 1
+                    ? "1 yrkestur mangler oppgitt formål"
+                    : `${totals.missingPurpose} yrkesturer mangler oppgitt formål`}
+                  . Klikk på formålsfeltet i tabellen for å fylle det inn — Skatteetaten krever formål for
+                  at turen skal telle som dokumentasjon.
                 </div>
               )}
               {totals.odometerMismatches > 0 && (
                 <div>
-                  {totals.odometerMismatches} tur har kilometerstand som ikke stemmer med den sporede
-                  distansen.
+                  {totals.odometerMismatches === 1
+                    ? "1 tur har kilometerstand"
+                    : `${totals.odometerMismatches} turer har kilometerstand`}{" "}
+                  som ikke stemmer med den sporede distansen.
                 </div>
               )}
             </div>
