@@ -403,7 +403,11 @@ export default function ReportPage() {
                         </td>
                         <td style={cellStyle}>{row.registration ?? "—"}</td>
                         <td style={cellStyle}>{formatKm(row.distanceMeters)}</td>
-                        <td style={cellStyle}>{formatKr(row.allowance.gross)}</td>
+                        {/* Kjøregodtgjørelse gjelder bare yrkeskjøring — et beløp
+                            på en privattur motsier totalen, som holder dem utenfor. */}
+                        <td style={cellStyle}>
+                          {row.purpose === "WORK" ? formatKr(row.allowance.gross) : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
