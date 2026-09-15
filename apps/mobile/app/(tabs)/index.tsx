@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+// The Animated-based Swipeable, not the Reanimated one: Reanimated 4 moved its
+// worklet runtime into a separate react-native-worklets package that this app
+// does not have, so ReanimatedSwipeable renders but never responds to a drag.
+import Swipeable from "react-native-gesture-handler/Swipeable";
 import { router, useFocusEffect } from "expo-router";
 import { api } from "@/lib/api";
 import { getTrackerState } from "@/lib/tripTracker";
@@ -144,6 +148,7 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
   const startTime = format(parseISO(trip.startedAt), "HH:mm", { locale: nb });
   const endTime = trip.endedAt ? format(parseISO(trip.endedAt), "HH:mm", { locale: nb }) : null;
   const mode: TripMode = trip.mode ?? "CAR";
+  const swipeRef = useRef<Swipeable>(null);
 
   const handleLongPress = () => {
     const nextPurpose: TripPurpose = trip.purpose === "PRIVATE" ? "WORK" : "PRIVATE";
@@ -174,29 +179,75 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
         <View style={[styles.timelineDot, isActive && styles.timelineDotActive]} />
         {!isLast && <View style={styles.timelineLine} />}
       </View>
-      <TouchableOpacity style={styles.timelineCard} onPress={() => onPress(trip.id)} onLongPress={handleLongPress} activeOpacity={0.85}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <Text style={styles.modeIcon}>{MODE_ICONS[mode]}</Text>
-            <Text style={styles.distance}>{formatDistance(trip.distanceMeters)}</Text>
+      <Swipeable
+        ref={swipeRef}
+        // The card carries flex: 1 to fill the row next to the timeline rail;
+        // without this the wrapper collapses to content width and the card
+        // overflows the screen edge.
+        containerStyle={styles.swipeContainer}
+        friction={2}
+        leftThreshold={72}
+        rightThreshold={72}
+        overshootLeft={false}
+        overshootRight={false}
+        renderLeftActions={() => <SwipeAction purpose="WORK" />}
+        renderRightActions={() => <SwipeAction purpose="PRIVATE" />}
+        onSwipeableOpen={(direction) => {
+          // Dragging right reveals the left pane, and vice versa.
+          const next: TripPurpose = direction === "left" ? "WORK" : "PRIVATE";
+          swipeRef.current?.close();
+          if (next !== trip.purpose) onSetPurpose(trip.id, next);
+        }}
+      >
+        <TouchableOpacity style={styles.timelineCard} onPress={() => onPress(trip.id)} onLongPress={handleLongPress} activeOpacity={0.85}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderLeft}>
+              <Text style={styles.modeIcon}>{MODE_ICONS[mode]}</Text>
+              <Text style={styles.distance}>{formatDistance(trip.distanceMeters)}</Text>
+            </View>
+            <View style={styles.cardHeaderRight}>
+              <View style={[styles.purposeTag, trip.purpose === "WORK" && styles.purposeTagWork]}>
+                <Text
+                  style={[styles.purposeTagText, trip.purpose === "WORK" && styles.purposeTagTextWork]}
+                >
+                  {trip.purpose === "WORK" ? "Jobb" : "Privat"}
+                </Text>
+              </View>
+              {isActive && (
+                <View style={styles.activeBadge}>
+                  <View style={styles.activeBadgeDot} />
+                  <Text style={styles.activeBadgeText}>Aktiv</Text>
+                </View>
+              )}
+            </View>
           </View>
-          {isActive && (
-            <View style={styles.activeBadge}>
-              <View style={styles.activeBadgeDot} />
-              <Text style={styles.activeBadgeText}>Aktiv</Text>
+          <Text style={styles.route} numberOfLines={2}>
+            {getTripStartLabel(trip)}
+          </Text>
+          {getTripEndLabel(trip) && (
+            <View style={styles.destinationRow}>
+              <Text style={styles.arrow}>→</Text>
+              <Text style={styles.route} numberOfLines={2}>{getTripEndLabel(trip)}</Text>
             </View>
           )}
-        </View>
-        <Text style={styles.route} numberOfLines={2}>
-          {getTripStartLabel(trip)}
-        </Text>
-        {getTripEndLabel(trip) && (
-          <View style={styles.destinationRow}>
-            <Text style={styles.arrow}>→</Text>
-            <Text style={styles.route} numberOfLines={2}>{getTripEndLabel(trip)}</Text>
-          </View>
-        )}
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </Swipeable>
+    </View>
+  );
+}
+
+/** The coloured pane revealed behind the card while swiping. */
+function SwipeAction({ purpose }: { purpose: TripPurpose }) {
+  const isWork = purpose === "WORK";
+  return (
+    <View
+      style={[
+        styles.swipeAction,
+        isWork ? styles.swipeActionWork : styles.swipeActionPrivate,
+        isWork ? styles.swipeActionLeft : styles.swipeActionRight,
+      ]}
+    >
+      <Text style={styles.swipeActionText}>{isWork ? "Jobb" : "Privat"}</Text>
     </View>
   );
 }
@@ -429,6 +480,33 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
+  swipeContainer: { flex: 1 },
+  cardHeaderRight: { flexDirection: "row", alignItems: "center" },
+  purposeTag: {
+    backgroundColor: "#f1f5f9",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    marginLeft: 6,
+  },
+  purposeTagWork: { backgroundColor: "#dbeafe" },
+  purposeTagText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
+  purposeTagTextWork: { color: "#1d4ed8" },
+  swipeAction: {
+    justifyContent: "center",
+    borderRadius: 12,
+    marginVertical: 2,
+    paddingHorizontal: 22,
+    // Explicit width, not flex: Swipeable measures the rendered pane to decide
+    // how far it can open, and a flexed pane measures as zero — the gesture
+    // then has nowhere to go and does nothing at all.
+    width: 120,
+  },
+  swipeActionWork: { backgroundColor: "#2563eb" },
+  swipeActionPrivate: { backgroundColor: "#64748b" },
+  swipeActionLeft: { alignItems: "flex-start" },
+  swipeActionRight: { alignItems: "flex-end" },
+  swipeActionText: { color: "#fff", fontSize: 15, fontWeight: "700" },
   warningBannerTitle: { fontSize: 15, fontWeight: "700", color: "#b91c1c", marginBottom: 4 },
   warningBannerText: { fontSize: 13, color: "#7f1d1d", lineHeight: 18 },
   header: { marginBottom: 16 },

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Stack, router, useSegments } from "expo-router";
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { StatusBar } from "expo-status-bar";
@@ -101,13 +102,18 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <RootNavigator />
-    </AuthProvider>
+    // Required for the swipe gestures on the trip list; without it the
+    // handlers never receive touches.
+    <GestureHandlerRootView style={styles.root}>
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   bootScreen: {
     flex: 1,
     alignItems: "center",
