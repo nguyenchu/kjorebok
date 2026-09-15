@@ -55,6 +55,8 @@ export default function TripDetailScreen() {
   const [purpose, setPurpose] = useState<TripPurpose>("PRIVATE");
   const [purposeNote, setPurposeNote] = useState("");
   const [client, setClient] = useState("");
+  const [odometerStart, setOdometerStart] = useState("");
+  const [odometerEnd, setOdometerEnd] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -65,6 +67,8 @@ export default function TripDetailScreen() {
         setPurpose(result.purpose);
         setPurposeNote(result.purposeNote ?? "");
         setClient(result.client ?? "");
+        setOdometerStart(result.odometerStart?.toString() ?? "");
+        setOdometerEnd(result.odometerEnd?.toString() ?? "");
       })
       .catch((e: any) => setError(e.message))
       .finally(() => setLoading(false));
@@ -72,11 +76,34 @@ export default function TripDetailScreen() {
 
   const hasRoute = (trip?.route.length ?? 0) > 0;
 
+  const parseOdometer = (value: string): number | null => {
+    const digits = value.replace(/\s/g, "");
+    if (!digits) return null;
+    const parsed = Number(digits);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  };
+
+  const startKm = parseOdometer(odometerStart);
+  const endKm = parseOdometer(odometerEnd);
+
   const dirty =
     trip !== null &&
     (purpose !== trip.purpose ||
       purposeNote.trim() !== (trip.purposeNote ?? "") ||
-      client.trim() !== (trip.client ?? ""));
+      client.trim() !== (trip.client ?? "") ||
+      startKm !== trip.odometerStart ||
+      endKm !== trip.odometerEnd);
+
+  const odometerOutOfOrder = startKm !== null && endKm !== null && endKm < startKm;
+
+  // Same tolerance the report uses to flag a mismatch, shown here while there
+  // is still a chance to correct the reading.
+  const trackedKm = trip ? trip.distanceMeters / 1000 : 0;
+  const loggedKm = startKm !== null && endKm !== null ? endKm - startKm : null;
+  const odometerMismatch =
+    loggedKm !== null &&
+    !odometerOutOfOrder &&
+    Math.abs(loggedKm - trackedKm) > Math.max(2, trackedKm * 0.1);
 
   const handleSave = async () => {
     if (!trip) return;
@@ -88,6 +115,8 @@ export default function TripDetailScreen() {
         // documentation — null says that more clearly than "".
         purposeNote: purposeNote.trim() || null,
         client: client.trim() || null,
+        odometerStart: startKm,
+        odometerEnd: endKm,
       });
       setTrip({ ...trip, ...updated });
     } catch (e: any) {
@@ -197,11 +226,51 @@ export default function TripDetailScreen() {
               </>
             )}
 
+            <Text style={styles.fieldLabel}>Kilometerstand</Text>
+            <View style={styles.odometerRow}>
+              <View style={styles.odometerField}>
+                <Text style={styles.odometerCaption}>Ved start</Text>
+                <TextInput
+                  style={styles.input}
+                  value={odometerStart}
+                  onChangeText={setOdometerStart}
+                  placeholder="—"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="number-pad"
+                  maxLength={7}
+                />
+              </View>
+              <View style={styles.odometerField}>
+                <Text style={styles.odometerCaption}>Ved slutt</Text>
+                <TextInput
+                  style={styles.input}
+                  value={odometerEnd}
+                  onChangeText={setOdometerEnd}
+                  placeholder="—"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="number-pad"
+                  maxLength={7}
+                />
+              </View>
+            </View>
+
+            {odometerOutOfOrder && (
+              <Text style={styles.warning}>
+                Kilometerstand ved slutt kan ikke være lavere enn ved start.
+              </Text>
+            )}
+            {odometerMismatch && loggedKm !== null && (
+              <Text style={styles.warning}>
+                Kilometerstanden viser {loggedKm.toFixed(0)} km, men turen er målt til{" "}
+                {trackedKm.toFixed(1)} km. Sjekk avlesningen — rapporten flagger avviket.
+              </Text>
+            )}
+
             {dirty && (
               <TouchableOpacity
-                style={[styles.saveButton, saving && styles.buttonDisabled]}
+                style={[styles.saveButton, (saving || odometerOutOfOrder) && styles.buttonDisabled]}
                 onPress={() => void handleSave()}
-                disabled={saving}
+                disabled={saving || odometerOutOfOrder}
                 activeOpacity={0.85}
               >
                 {saving ? (
@@ -265,6 +334,10 @@ const styles = StyleSheet.create({
     minHeight: 46,
   },
   hint: { fontSize: 12, color: "#64748b", lineHeight: 18, marginTop: 14 },
+  odometerRow: { flexDirection: "row", gap: 12 },
+  odometerField: { flex: 1 },
+  odometerCaption: { fontSize: 12, color: "#64748b", marginBottom: 6 },
+  warning: { fontSize: 12, color: "#b45309", lineHeight: 18, marginTop: 10 },
   saveButton: {
     backgroundColor: "#2563eb",
     borderRadius: 12,
