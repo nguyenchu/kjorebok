@@ -219,7 +219,9 @@ export function renderKjorebokPdf(report: KjorebokReport): Promise<Buffer> {
   });
 
   const done = collect(doc);
-  const columns = columnsFor(report.vehicle === null);
+  // The registration column only earns its width when the rows actually differ;
+  // otherwise the header states the vehicle once and the rows get the space.
+  const columns = columnsFor(report.vehicle === null && soleVehicle(report) === null);
   const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
 
   drawHeader(doc, report);
@@ -259,6 +261,17 @@ function collect(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
+/** The one vehicle every row was driven with, if there is exactly one. */
+function soleVehicle(report: KjorebokReport): { label: string; registration: string } | null {
+  if (report.rows.length === 0) return null;
+
+  const registration = report.rows[0].registration;
+  if (!registration) return null;
+  if (report.rows.some((row) => row.registration !== registration)) return null;
+
+  return { label: report.rows[0].vehicleLabel ?? registration, registration };
+}
+
 function drawHeader(doc: PDFKit.PDFDocument, report: KjorebokReport) {
   doc.font("Helvetica-Bold").fontSize(18).fillColor(INK)
     .text("Kjørebok", PAGE_MARGIN, PAGE_MARGIN);
@@ -282,7 +295,10 @@ function drawHeader(doc: PDFKit.PDFDocument, report: KjorebokReport) {
     line("Kjøretøy", `${report.vehicle.label} · ${report.vehicle.registration}`);
     line("Type", VEHICLE_TYPE_LABELS[report.vehicle.type]);
   } else {
-    line("Kjøretøy", "Alle");
+    const only = soleVehicle(report);
+    // "Alle" is misleading when every trip happens to be the same car; the
+    // filter just was not used. Type stays out — the rows do not carry it.
+    line("Kjøretøy", only ? `${only.label} · ${only.registration}` : "Alle");
   }
 
   doc.y = Math.max(doc.y, top);
