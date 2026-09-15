@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-// The Animated-based Swipeable, not the Reanimated one: Reanimated 4 moved its
-// worklet runtime into a separate react-native-worklets package that this app
-// does not have, so ReanimatedSwipeable renders but never responds to a drag.
+// The Animated-based Swipeable, not the Reanimated one. ReanimatedSwipeable
+// renders without complaint here but never responds to a drag, even with
+// react-native-worklets installed — so the cause is something else in this
+// gesture-handler 2.28 / Reanimated 4 combination, not just the missing
+// worklet runtime. This variant is deprecated but works; revisit when the
+// libraries move on.
 import Swipeable from "react-native-gesture-handler/Swipeable";
 import { router, useFocusEffect } from "expo-router";
 import { api } from "@/lib/api";
