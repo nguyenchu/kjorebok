@@ -228,7 +228,9 @@ export function renderKjorebokPdf(report: KjorebokReport): Promise<Buffer> {
 
   const bottom = doc.page.height - PAGE_MARGIN - 28;
   for (const [index, row] of report.rows.entries()) {
-    if (y + 18 > bottom) {
+    // Measure before placing: rows are no longer a fixed height, so a tall one
+    // would otherwise be drawn past the bottom margin.
+    if (y + rowHeight(doc, columns, row) > bottom) {
       doc.addPage();
       y = drawTableHeader(doc, columns, PAGE_MARGIN);
     }
@@ -303,6 +305,24 @@ function drawTableHeader(doc: PDFKit.PDFDocument, columns: Column[], y: number):
   return bottom + 5;
 }
 
+const ROW_MIN_HEIGHT = 16;
+const ROW_PADDING = 5;
+
+/**
+ * Tallest cell decides the row height. Addresses regularly need two lines, and
+ * a fixed height made them overlap the row above — in a document that is filed
+ * as documentation, a clipped address is worse than a taller row.
+ */
+export function rowHeight(doc: PDFKit.PDFDocument, columns: Column[], row: KjorebokRow): number {
+  doc.font("Helvetica").fontSize(8.5);
+  let tallest = 0;
+  for (const column of columns) {
+    const height = doc.heightOfString(cellText(row, column), { width: column.width - 6 });
+    if (height > tallest) tallest = height;
+  }
+  return Math.max(ROW_MIN_HEIGHT, tallest + ROW_PADDING);
+}
+
 function drawRow(
   doc: PDFKit.PDFDocument,
   columns: Column[],
@@ -310,7 +330,7 @@ function drawRow(
   y: number,
   shaded: boolean,
 ): number {
-  const height = 16;
+  const height = rowHeight(doc, columns, row);
   const width = columns.reduce((sum, column) => sum + column.width, 0);
 
   if (shaded) {
@@ -324,8 +344,6 @@ function drawRow(
     doc.text(cellText(row, column), x, y, {
       width: column.width - 6,
       align: column.align ?? "left",
-      lineBreak: false,
-      ellipsis: true,
     });
     x += column.width;
   }
