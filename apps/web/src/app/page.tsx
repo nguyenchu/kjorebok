@@ -39,6 +39,15 @@ function formatDistance(meters: number) {
     : `${Math.round(meters)} m`;
 }
 
+/** "snitt 42 km/t · maks 78 km/t · 18 min i bevegelse", or "" before the trip is processed. */
+function formatMotion(trip: Pick<Trip, "avgMovingSpeedKmh" | "maxSpeedKmh" | "movingSeconds">) {
+  const parts: string[] = [];
+  if (trip.avgMovingSpeedKmh) parts.push(`snitt ${Math.round(trip.avgMovingSpeedKmh)} km/t`);
+  if (trip.maxSpeedKmh) parts.push(`maks ${Math.round(trip.maxSpeedKmh)} km/t`);
+  if (trip.movingSeconds) parts.push(`${Math.round(trip.movingSeconds / 60)} min i bevegelse`);
+  return parts.join(" · ");
+}
+
 function formatDuration(start: string, end: string | null) {
   if (!end) return "Pågår...";
   const s = new Date(start);
@@ -978,7 +987,8 @@ export default function DashboardPage() {
                 </div>
                 {mapTrip && (
                   <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                    {(mapTrip.distanceMeters / 1000).toFixed(1)} km · {mapTrip.route.length} GPS-punkter
+                    {(mapTrip.distanceMeters / 1000).toFixed(1)} km · {mapTrip.pointCount ?? mapTrip.route.length} GPS-punkter
+                    {formatMotion(mapTrip) && ` · ${formatMotion(mapTrip)}`}
                   </div>
                 )}
               </div>

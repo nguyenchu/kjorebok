@@ -1,5 +1,5 @@
 export { haversine, routeDistance, type LatLng } from "./geo.js";
-export { classifyMode, classifyMovingSpeeds, detectTripMode } from "./mode.js";
+export { classifyMovingSpeeds } from "./mode.js";
 export { processTrack, TRACK_PROCESSING_VERSION } from "./process.js";
 export {
   DEFAULT_TRACK_OPTIONS,

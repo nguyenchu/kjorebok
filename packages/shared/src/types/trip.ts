@@ -34,9 +34,31 @@ export interface Trip {
   vehicle: Vehicle | null;
   odometerStart: number | null;
   odometerEnd: number | null;
+  /**
+   * Smoothed line once the trip is processed, raw fixes while it is running.
+   * Its length is not the number of fixes; see pointCount.
+   */
   route: GpsPoint[];
+  /** Straight lines between every fix, before the track was processed. */
+  rawDistanceMeters: number | null;
+  maxSpeedKmh: number | null;
+  avgMovingSpeedKmh: number | null;
+  movingSeconds: number | null;
+  stoppedSeconds: number | null;
+  /** Number of GPS fixes recorded. */
+  pointCount: number | null;
+  /** Only on a single processed trip. */
+  stops?: TripStop[] | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TripStop {
+  start: string;
+  end: string;
+  seconds: number;
+  lat: number;
+  lng: number;
 }
 
 export interface CreateTripDto {

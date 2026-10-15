@@ -1,7 +1,12 @@
 import type { Prisma } from "@prisma/client/index.js";
 import type { GpsPoint } from "@kjorebok/shared";
 import { prisma } from "./prisma.js";
-import { routeDistance, type TrackPoint } from "./track/index.js";
+import {
+  processTrack,
+  type ProcessedTrack,
+  type TrackLinePoint,
+  type TrackPoint,
+} from "./track/index.js";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -81,17 +86,57 @@ export async function loadTrackPoints(db: Db, tripId: string): Promise<TrackPoin
   }));
 }
 
-/** Trip columns derived from its route. */
-export function summarizeRoute(route: GpsPoint[]) {
-  const first = route[0] ?? null;
-  const last = route[route.length - 1] ?? null;
+/**
+ * Trip columns derived from its processed track. While a trip is running only
+ * the figures shown live change; the map line, stops, mode and processing
+ * version are written once it is complete, or when it is reprocessed.
+ */
+export function trackColumns(track: ProcessedTrack, complete: boolean) {
+  const first = track.line[0] ?? null;
+  const last = track.line[track.line.length - 1] ?? null;
   return {
-    distanceMeters: routeDistance(route),
+    distanceMeters: track.distanceMeters,
+    rawDistanceMeters: track.rawDistanceMeters,
+    maxSpeedKmh: track.maxSpeedKmh,
+    avgMovingSpeedKmh: track.avgMovingSpeedKmh,
+    movingSeconds: track.movingSeconds,
+    stoppedSeconds: track.stoppedSeconds,
+    pointCount: track.inputPointCount,
+    rejectedPointCount: track.rejectedPointCount,
     startLat: first?.lat ?? null,
     startLng: first?.lng ?? null,
     endLat: last?.lat ?? null,
     endLng: last?.lng ?? null,
-  };
+    ...(complete
+      ? {
+          mode: track.mode,
+          track: track.line as unknown as Prisma.InputJsonValue,
+          stops: track.stops as unknown as Prisma.InputJsonValue,
+          processingVersion: track.version,
+        }
+      : {}),
+  } satisfies Prisma.TripUpdateInput;
+}
+
+/** Processes the trip's stored fixes. */
+export async function processTripPoints(db: Db, tripId: string): Promise<ProcessedTrack> {
+  return processTrack(await loadTrackPoints(db, tripId));
+}
+
+/**
+ * The stored map line in the GpsPoint shape clients render as `route`, or
+ * null when the trip has not been processed yet.
+ */
+export function trackToRoute(track: Prisma.JsonValue | null): GpsPoint[] | null {
+  if (!Array.isArray(track)) return null;
+  return (track as unknown as TrackLinePoint[]).map((point) => ({
+    lat: point.lat,
+    lng: point.lng,
+    speed: point.speedKmh / 3.6,
+    heading: 0,
+    accuracy: 0,
+    timestamp: point.timestamp,
+  }));
 }
 
 /**
