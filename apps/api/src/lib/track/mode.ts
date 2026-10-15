@@ -57,10 +57,12 @@ export function detectTripMode(points: GpsPoint[]): TripMode {
 }
 
 /**
- * Classifies a trip from smoothed speeds while moving (stops excluded). These
- * are close to the true speed, so the thresholds are plain typical speeds:
- * walking under ~7 km/h, cycling ~12–20, e-bikes held near their 25 km/h
- * assist limit, and cars faster than any of them at some point.
+ * Classifies a trip from smoothed speeds while moving (stops excluded).
+ *
+ * Only walking is told apart from driving. A car in a 30 zone or a queue moves
+ * at the same speeds as a bicycle or an e-bike, so speed cannot separate them,
+ * and almost every trip in a kjørebok is a car: anything faster than walking
+ * is CAR, and the user marks the occasional bike trip by hand.
  */
 export function classifyMovingSpeeds(movingSpeedsKmh: number[]): TripMode {
   const speeds = movingSpeedsKmh.filter((speed) => Number.isFinite(speed)).sort((a, b) => a - b);
@@ -68,13 +70,9 @@ export function classifyMovingSpeeds(movingSpeedsKmh: number[]): TripMode {
 
   const median = percentile(speeds, 0.5);
   const p90 = percentile(speeds, 0.9);
-  // Not the max: a few seconds of a bad estimate should not decide the mode.
-  const p98 = percentile(speeds, 0.98);
 
-  if (p98 >= 55 || p90 >= 42 || median >= 32) return "CAR";
-  if (median >= 19) return "EBIKE";
-  if (median >= 8 || p90 >= 13) return "CYCLE";
-  return "WALK";
+  if (median < 8 && p90 < 13) return "WALK";
+  return "CAR";
 }
 
 /** Below this a moment counts as standing still for `movingRatio`. */

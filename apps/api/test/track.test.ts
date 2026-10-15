@@ -17,6 +17,29 @@ function cityRoute(): Route {
   return route;
 }
 
+/** Residential streets: 30 km/h, slow corners and a wait at every other junction. */
+function thirtyZoneRoute(): Route {
+  const route = new Route();
+  for (let block = 0; block < 6; block++) {
+    route
+      .straight(250, kmh(30))
+      .turn(block % 2 === 0 ? 90 : -90, 10, kmh(15))
+      .straight(100, kmh(25))
+      .turn(block % 2 === 0 ? -90 : 90, 10, kmh(15));
+    if (block % 2 === 1) route.stop(40);
+  }
+  return route;
+}
+
+/** A queue that never gets above 20 km/h: short creeps between waits. */
+function queueRoute(): Route {
+  const route = new Route();
+  for (let i = 0; i < 12; i++) {
+    route.straight(60, kmh(12)).straight(40, kmh(20)).stop(25);
+  }
+  return route;
+}
+
 describe("processTrack: distance", () => {
   it("measures a straight drive close to its true length, closer than the raw sum", () => {
     const route = new Route().straight(2000, kmh(50));
@@ -178,11 +201,26 @@ describe("processTrack: stops and mode", () => {
 
   it.each([
     ["CAR", new Route().straight(4000, kmh(60)), 2],
-    ["CYCLE", new Route().straight(3000, kmh(17)), 2],
     ["WALK", new Route().straight(800, 1.3), 3],
+    ["WALK", new Route().straight(1200, kmh(6)), 3],
   ] as const)("recognises %s from the smoothed speeds", (mode, route, intervalSeconds) => {
     const result = processTrack(sample(route, { intervalSeconds, accuracy: 5, seed: 13 }));
     expect(result.mode).toBe(mode);
+  });
+
+  // A car held to bicycle speeds moves exactly like a bicycle, and almost every
+  // trip in a kjørebok is a car, so speeds a car can drive come out as CAR.
+  it.each([
+    ["in city traffic", cityRoute()],
+    ["in a 30 zone", thirtyZoneRoute()],
+    ["in a stop-and-go queue", queueRoute()],
+    ["at a steady bicycle speed", new Route().straight(3000, kmh(17))],
+    ["at a steady e-bike speed", new Route().straight(4000, kmh(24))],
+  ])("calls a trip %s a car", (_name, route) => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const result = processTrack(sample(route, { intervalSeconds: 2, accuracy: 8, seed }));
+      expect(result.mode).toBe("CAR");
+    }
   });
 });
 
