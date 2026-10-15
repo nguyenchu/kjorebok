@@ -36,6 +36,13 @@ export interface TrackOptions {
    */
   stayMinSeconds: number;
   stayMaxExtentMeters: number;
+  /**
+   * A stop cannot contain a smoothed speed above this (m/s). Manoeuvring in a
+   * car park or creeping through a garage stays within a small box but is
+   * real driving; a parked phone's drift, or someone walking with it, is
+   * slower than this.
+   */
+  stayMaxSpeedMs: number;
   /** Time without fixes (s) that is reported as a gap. */
   gapSeconds: number;
   /** Douglas–Peucker tolerance for the map line. */
@@ -53,6 +60,7 @@ export const DEFAULT_TRACK_OPTIONS: TrackOptions = {
   movingSpeedMs: 1,
   stayMinSeconds: 60,
   stayMaxExtentMeters: 50,
+  stayMaxSpeedMs: 2.5,
   gapSeconds: 60,
   simplifyToleranceMeters: 3,
 };

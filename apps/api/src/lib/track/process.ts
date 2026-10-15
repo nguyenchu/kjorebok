@@ -13,7 +13,7 @@ import {
 } from "./types.js";
 
 /** Bump when the output for the same points changes, so stored results can be recomputed. */
-export const TRACK_PROCESSING_VERSION = 1;
+export const TRACK_PROCESSING_VERSION = 2;
 
 /**
  * Android and iOS report the radius that holds the true position 68 % of the
@@ -58,18 +58,25 @@ function cleanPoints(points: TrackPoint[], maxAccuracyMeters: number): TrackPoin
 /**
  * Index ranges [first, last] where the vehicle stayed put: at least
  * `stayMinSeconds` long with every position inside a box whose diagonal is at
- * most `stayMaxExtentMeters`. Ranges do not overlap and are in order.
+ * most `stayMaxExtentMeters` and no smoothed speed above `stayMaxSpeedMs`.
+ * Ranges do not overlap and are in order.
  */
 function findStays(states: SmoothedState[], options: TrackOptions): [number, number][] {
+  const tooFast = (state: SmoothedState) => Math.hypot(state.vx, state.vy) > options.stayMaxSpeedMs;
   const stays: [number, number][] = [];
   let i = 0;
   while (i < states.length - 1) {
+    if (tooFast(states[i])) {
+      i++;
+      continue;
+    }
     let minX = states[i].x;
     let maxX = minX;
     let minY = states[i].y;
     let maxY = minY;
     let k = i + 1;
     for (; k < states.length; k++) {
+      if (tooFast(states[k])) break;
       const { x, y } = states[k];
       const extent = Math.hypot(Math.max(maxX, x) - Math.min(minX, x), Math.max(maxY, y) - Math.min(minY, y));
       if (extent > options.stayMaxExtentMeters) break;
