@@ -49,17 +49,57 @@ model Trip {
   vehicleId      String?
   odometerStart  Int?
   odometerEnd    Int?
-  // Route stored as JSON array of GpsPoint objects
-  // For production, consider PostGIS geography(LineString) instead
+  /// First and latest recorded position, kept here so trip lists and reports
+  /// can match places without loading every point.
+  startLat       Float?
+  startLng       Float?
+  endLat         Float?
+  endLng         Float?
+  /// Legacy JSON route. No longer written; its contents were copied into
+  /// TripPoint and the column is dropped once no client depends on it.
   route          Json        @default("[]")
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
   user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   vehicle        Vehicle?    @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  points         TripPoint[]
 
   @@index([userId])
   @@index([status])
   @@index([vehicleId])
+}
+
+/// One GPS fix exactly as the phone reported it. Everything derived from a
+/// trip's route (distance, speeds, the line on the map) is computed from these
+/// rows, so the algorithm can improve and old trips can be recalculated.
+model TripPoint {
+  id               BigInt      @id @default(autoincrement())
+  tripId           String
+  /// GPS timestamp of the fix, not when the server received it.
+  recordedAt       DateTime
+  lat              Float
+  lng              Float
+  /// Horizontal accuracy in meters.
+  accuracy         Float
+  /// m/s as reported by the device; null when the device did not know.
+  speed            Float?
+  heading          Float?
+  altitude         Float?
+  altitudeAccuracy Float?
+  source           PointSource @default(DEVICE)
+  receivedAt       DateTime    @default(now())
+  trip             Trip        @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  /// A fix is identified by its timestamp, which makes resending a batch whose
+  /// response got lost harmless.
+  @@unique([tripId, recordedAt])
+}
+
+enum PointSource {
+  /// Sent by the app as a raw fix.
+  DEVICE
+  /// Copied from the legacy Trip.route JSON, already filtered on the phone.
+  LEGACY_ROUTE
 }
 
 /// A vehicle the trips are logged against. Skatteetaten expects a kjørebok to
