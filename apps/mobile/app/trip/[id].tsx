@@ -16,6 +16,15 @@ import { WebView } from "react-native-webview";
 import { api } from "@/lib/api";
 import type { Trip, TripPurpose } from "@kjorebok/shared";
 
+/** "Snitt 42 km/t · maks 78 km/t · 18 min i bevegelse", or "" before the trip is processed. */
+function formatMotion(trip: Pick<Trip, "avgMovingSpeedKmh" | "maxSpeedKmh" | "movingSeconds">): string {
+  const parts: string[] = [];
+  if (trip.avgMovingSpeedKmh) parts.push(`Snitt ${Math.round(trip.avgMovingSpeedKmh)} km/t`);
+  if (trip.maxSpeedKmh) parts.push(`maks ${Math.round(trip.maxSpeedKmh)} km/t`);
+  if (trip.movingSeconds) parts.push(`${Math.round(trip.movingSeconds / 60)} min i bevegelse`);
+  return parts.join(" · ");
+}
+
 function buildMapHtml(coordinates: { lat: number; lng: number }[]): string {
   const latlngs = JSON.stringify(coordinates.map((p) => [p.lat, p.lng]));
   return `<!DOCTYPE html>
@@ -174,9 +183,10 @@ export default function TripDetailScreen() {
           <ScrollView style={styles.sheet} contentContainerStyle={styles.sheetContent}>
             <Text style={styles.infoDistance}>{(trip.distanceMeters / 1000).toFixed(1)} km</Text>
             <Text style={styles.infoMeta}>
-              {hasRoute ? `${trip.route.length} GPS-punkter` : "Ingen GPS-punkter"}
+              {hasRoute ? `${trip.pointCount ?? trip.route.length} GPS-punkter` : "Ingen GPS-punkter"}
               {trip.vehicle ? ` · ${trip.vehicle.label} (${trip.vehicle.registration})` : ""}
             </Text>
+            {formatMotion(trip) !== "" && <Text style={styles.infoMeta}>{formatMotion(trip)}</Text>}
 
             <Text style={styles.fieldLabel}>Formål med turen</Text>
             <View style={styles.purposeRow}>

@@ -13,12 +13,13 @@ import {
 } from "../lib/kjorebokReport.js";
 import { periodLabel, periodRange, periodSlug, periodYearOf } from "../lib/period.js";
 import { findMatchingPlace } from "../lib/placeMatcher.js";
-import { detectTripMode } from "../lib/track/index.js";
 import {
   insertPoints,
   loadRoute,
-  summarizeRoute,
+  processTripPoints,
   toPointRow,
+  trackColumns,
+  trackToRoute,
   withActiveTrip,
   type IncomingPoint,
 } from "../lib/tripPoints.js";
@@ -88,11 +89,23 @@ const tripDocumentationSelect = {
   vehicle: tripVehicleSelect,
 } as const;
 
+const tripMetricsSelect = {
+  rawDistanceMeters: true,
+  maxSpeedKmh: true,
+  avgMovingSpeedKmh: true,
+  movingSeconds: true,
+  stoppedSeconds: true,
+  pointCount: true,
+} as const;
+
 const MIN_TRIP_DISTANCE_METERS = 50;
 const STALE_ACTIVE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 
-/** The legacy JSON route is never sent to clients; `route` comes from TripPoint. */
-const omitLegacyRoute = { route: true } as const;
+/**
+ * Never sent as stored: the legacy JSON route is obsolete, and the map line is
+ * sent as `route` only by the single-trip endpoint.
+ */
+const omitStoredGeometry = { route: true, track: true } as const;
 
 async function loadUserPlaces(userId: string): Promise<Place[]> {
   return prisma.place.findMany({
@@ -131,42 +144,42 @@ async function completeTrip(
   data: Prisma.TripUpdateInput,
   fallbackEndedAt: Date,
 ) {
-  const route = await loadRoute(tx, tripId);
-  const geometry = summarizeRoute(route);
+  const track = await processTripPoints(tx, tripId);
 
-  if (geometry.distanceMeters < MIN_TRIP_DISTANCE_METERS) {
+  // Measured on the processed track, so a phone that only wandered around a
+  // parking space does not leave a trip behind.
+  if (track.distanceMeters < MIN_TRIP_DISTANCE_METERS) {
     await tx.trip.delete({ where: { id: tripId } });
     return null;
   }
 
-  const last = route[route.length - 1];
+  const last = track.line[track.line.length - 1];
   return tx.trip.update({
     where: { id: tripId },
     data: {
       endedAt: last ? new Date(last.timestamp) : fallbackEndedAt,
       ...data,
-      ...geometry,
+      ...trackColumns(track, true),
       status: "COMPLETED",
-      mode: detectTripMode(route),
     },
-    omit: omitLegacyRoute,
+    omit: omitStoredGeometry,
   });
 }
 
-/** Stores fixes on the user's active trip and refreshes its distance and endpoints. */
+/** Stores fixes on the user's active trip and refreshes its live figures. */
 async function appendToActiveTrip(userId: string, tripId: string, points: IncomingPoint[]) {
   return withActiveTrip(userId, tripId, async (tx) => {
     const acceptedPoints = await insertPoints(tx, tripId, points);
-    const route = await loadRoute(tx, tripId);
+    const track = await processTripPoints(tx, tripId);
     const trip = await tx.trip.update({
       where: { id: tripId },
-      data: summarizeRoute(route),
-      omit: omitLegacyRoute,
+      data: trackColumns(track, false),
+      omit: omitStoredGeometry,
     });
     return {
       trip,
       acceptedPoints,
-      lastPointTimestamp: route[route.length - 1]?.timestamp ?? null,
+      lastPointTimestamp: track.line[track.line.length - 1]?.timestamp ?? null,
     };
   });
 }
@@ -338,6 +351,7 @@ export async function tripRoutes(app: FastifyInstance) {
           purpose: true, mode: true, createdAt: true, updatedAt: true,
           ...tripDocumentationSelect,
           ...tripEndpointsSelect,
+          ...tripMetricsSelect,
         },
       }),
       loadUserPlaces(userId),
@@ -350,16 +364,19 @@ export async function tripRoutes(app: FastifyInstance) {
     const userId = (request.user as any).sub;
     await finalizeStaleActiveTrips(userId);
     const { id } = request.params as { id: string };
-    const [trip, places, route] = await Promise.all([
+    const [stored, places] = await Promise.all([
       prisma.trip.findFirst({
         where: { id, userId },
         include: { vehicle: tripVehicleSelect },
-        omit: omitLegacyRoute,
+        omit: { route: true },
       }),
       loadUserPlaces(userId),
-      loadRoute(prisma, id),
     ]);
-    if (!trip) return reply.status(404).send({ error: "Not found" });
+    if (!stored) return reply.status(404).send({ error: "Not found" });
+
+    // A processed trip draws its smoothed line; one still running, its raw fixes.
+    const { track, ...trip } = stored;
+    const route = trackToRoute(track) ?? (await loadRoute(prisma, id));
     return reply.send({ ...attachPlaces(trip, places), route });
   });
 
@@ -395,7 +412,7 @@ export async function tripRoutes(app: FastifyInstance) {
         vehicleId: vehicle?.id ?? null,
         points: { create: [toPointRow(startPoint)] },
       },
-      omit: omitLegacyRoute,
+      omit: omitStoredGeometry,
     });
     return reply.status(201).send(trip);
   });

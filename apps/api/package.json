@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "test": "tsc -p test/tsconfig.json && vitest run",
     "track:compare": "node --env-file-if-exists=.env --import tsx scripts/compare-track.ts",
+    "track:reprocess": "node --env-file-if-exists=.env --import tsx scripts/reprocess-trips.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

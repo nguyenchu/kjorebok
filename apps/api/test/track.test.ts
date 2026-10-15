@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GpsPoint } from "@kjorebok/shared";
-import { detectTripMode, processTrack, type TrackPoint } from "../src/lib/track/index.js";
+import { processTrack } from "../src/lib/track/index.js";
 import { Route, displace, kmh, sample } from "./simulate.js";
 
 const relativeError = (measured: number, truth: number) => Math.abs(measured - truth) / truth;
@@ -221,22 +220,5 @@ describe("processTrack: stops and mode", () => {
       const result = processTrack(sample(route, { intervalSeconds: 2, accuracy: 8, seed }));
       expect(result.mode).toBe("CAR");
     }
-  });
-});
-
-describe("detectTripMode on raw fixes", () => {
-  const toGps = (points: TrackPoint[]): GpsPoint[] =>
-    points.map((p) => ({
-      lat: p.lat,
-      lng: p.lng,
-      speed: p.speed ?? 0,
-      heading: 0,
-      accuracy: p.accuracy,
-      timestamp: new Date(p.time).toISOString(),
-    }));
-
-  it("recognises a car", () => {
-    const route = new Route().straight(4000, kmh(60));
-    expect(detectTripMode(toGps(sample(route, { intervalSeconds: 2, accuracy: 8 })))).toBe("CAR");
   });
 });
