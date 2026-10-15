@@ -7,7 +7,25 @@ import { placeRoutes } from "./routes/places.js";
 import { vehicleRoutes } from "./routes/vehicles.js";
 import { rateRoutes } from "./routes/rates.js";
 
-const app = Fastify({ logger: true });
+const app = Fastify({
+  logger: {
+    // Second line of defence: should a request body or headers ever be logged,
+    // passwords and tokens must not end up in the server's logs.
+    redact: {
+      paths: [
+        "password",
+        "*.password",
+        "*.*.password",
+        "token",
+        "*.token",
+        "*.*.token",
+        "req.headers.authorization",
+        "*.headers.authorization",
+      ],
+      censor: "[redacted]",
+    },
+  },
+});
 const apiPrefix = normalizeApiPrefix(process.env.API_PREFIX);
 
 await app.register(cors, { origin: true });
