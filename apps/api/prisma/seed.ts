@@ -25,6 +25,15 @@ const PLACES = [
   { coords: [59.9560, 10.6420] as [number, number], name: "Røa" },
 ];
 
+type SeedPoint = {
+  lat: number;
+  lng: number;
+  speed: number;
+  heading: number;
+  accuracy: number;
+  timestamp: string;
+};
+
 function haversine([lat1, lng1]: [number, number], [lat2, lng2]: [number, number]): number {
   const R = 6371000;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -53,7 +62,7 @@ async function fetchRoadRoute(
 function buildRouteFromCoords(
   coords: [number, number][],
   startedAt: Date,
-): { route: object[]; durationMs: number; distanceMeters: number } {
+): { route: SeedPoint[]; durationMs: number; distanceMeters: number } {
   let distanceMeters = 0;
   for (let i = 1; i < coords.length; i++) {
     distanceMeters += haversine(coords[i - 1], coords[i]);
@@ -76,7 +85,11 @@ function buildRouteFromCoords(
   return { route, durationMs, distanceMeters: Math.round(distanceMeters) };
 }
 
-function buildRouteStraight(from: [number, number], to: [number, number], startedAt: Date) {
+function buildRouteStraight(
+  from: [number, number],
+  to: [number, number],
+  startedAt: Date,
+): { route: SeedPoint[]; durationMs: number; distanceMeters: number } {
   const distance = haversine(from, to);
   const speedMs = 45 / 3.6;
   const durationMs = (distance / speedMs) * 1000;
@@ -166,7 +179,23 @@ async function main() {
         startAddress: from.name,
         endAddress: to.name,
         purpose: spec.purpose,
-        route: route as any,
+        startLat: route[0].lat,
+        startLng: route[0].lng,
+        endLat: route[route.length - 1].lat,
+        endLng: route[route.length - 1].lng,
+        points: {
+          createMany: {
+            data: route.map((point) => ({
+              recordedAt: new Date(point.timestamp),
+              lat: point.lat,
+              lng: point.lng,
+              speed: point.speed,
+              heading: point.heading,
+              accuracy: point.accuracy,
+            })),
+            skipDuplicates: true,
+          },
+        },
       },
     });
   }
