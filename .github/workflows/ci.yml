@@ -44,3 +44,6 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Test API
+        run: pnpm --filter @kjorebok/api test

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client/index.js";
 import type { GpsPoint } from "@kjorebok/shared";
 import { prisma } from "./prisma.js";
+import { routeDistance, type TrackPoint } from "./track/index.js";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -14,27 +15,6 @@ export interface IncomingPoint {
   altitude?: number | null;
   altitudeAccuracy?: number | null;
   timestamp: string;
-}
-
-/** Haversine distance in meters between two lat/lng points */
-export function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const R = 6371000;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const x =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((a.lat * Math.PI) / 180) *
-      Math.cos((b.lat * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-}
-
-export function routeDistance(points: { lat: number; lng: number }[]): number {
-  let total = 0;
-  for (let i = 1; i < points.length; i++) {
-    total += haversine(points[i - 1], points[i]);
-  }
-  return total;
 }
 
 export function toPointRow(point: IncomingPoint) {
@@ -82,6 +62,22 @@ export async function loadRoute(db: Db, tripId: string): Promise<GpsPoint[]> {
     heading: row.heading ?? 0,
     accuracy: row.accuracy,
     timestamp: row.recordedAt.toISOString(),
+  }));
+}
+
+/** The trip's fixes as input to track processing, with unknown speed kept as null. */
+export async function loadTrackPoints(db: Db, tripId: string): Promise<TrackPoint[]> {
+  const rows = await db.tripPoint.findMany({
+    where: { tripId },
+    orderBy: { recordedAt: "asc" },
+    select: { recordedAt: true, lat: true, lng: true, accuracy: true, speed: true },
+  });
+  return rows.map((row) => ({
+    time: row.recordedAt.getTime(),
+    lat: row.lat,
+    lng: row.lng,
+    accuracy: row.accuracy,
+    speed: row.speed,
   }));
 }
 
