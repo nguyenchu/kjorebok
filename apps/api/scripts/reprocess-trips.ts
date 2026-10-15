@@ -1,8 +1,11 @@
 /**
- * Recomputes distance, mode and the other derived columns of completed trips
- * from their stored points, for trips processed with an older version of
- * processTrack (or never processed). Overwrites distanceMeters and mode, which
- * changes reports for periods already exported.
+ * Recomputes distance and the other derived columns of completed trips from
+ * their stored points, for trips processed with an older version of
+ * processTrack (or never processed). Overwrites distanceMeters, which changes
+ * reports for periods already exported.
+ *
+ * Mode is left alone: users set it by hand, and nothing records which trips
+ * they changed, so a recomputed mode could undo their correction.
  *
  * Usage:
  *   pnpm --filter @kjorebok/api track:reprocess [--apply] [--all] [--user <email>]
@@ -14,8 +17,12 @@ import { prisma } from "../src/lib/prisma.js";
 import { TRACK_PROCESSING_VERSION } from "../src/lib/track/index.js";
 import { processTripPoints, trackColumns } from "../src/lib/tripPoints.js";
 
-/** With fewer points there is nothing to measure, so the stored values are kept. */
-const MIN_POINTS = 2;
+/**
+ * With fewer usable points there is nothing to measure, so the stored values
+ * are kept. Counted after processTrack has dropped invalid fixes: a trip whose
+ * every fix was rejected would otherwise be overwritten with 0 km.
+ */
+const MIN_USED_POINTS = 2;
 
 const apply = process.argv.includes("--apply");
 const all = process.argv.includes("--all");
@@ -34,7 +41,7 @@ async function main() {
       ...(email ? { user: { email } } : {}),
     },
     orderBy: { startedAt: "asc" },
-    select: { id: true, startedAt: true, distanceMeters: true, mode: true },
+    select: { id: true, startedAt: true, distanceMeters: true },
   });
 
   console.log(`${apply ? "Oppdaterer" : "Tørrkjøring:"} ${trips.length} turer (versjon ${TRACK_PROCESSING_VERSION}).\n`);
@@ -42,34 +49,34 @@ async function main() {
   let before = 0;
   let after = 0;
   let skipped = 0;
-  let modeChanges = 0;
   let belowMinimum = 0;
 
   for (const trip of trips) {
     const track = await processTripPoints(prisma, trip.id);
     const date = trip.startedAt.toISOString().slice(0, 16).replace("T", " ");
 
-    if (track.inputPointCount < MIN_POINTS) {
+    if (track.usedPointCount < MIN_USED_POINTS) {
       skipped++;
-      console.log(`${date}  ${km(trip.distanceMeters)} km  hoppet over: ${track.inputPointCount} punkter`);
+      console.log(
+        `${date}  ${km(trip.distanceMeters)} km  hoppet over: ${track.usedPointCount} av ${track.inputPointCount} punkter brukbare`,
+      );
       continue;
     }
 
     before += trip.distanceMeters;
     after += track.distanceMeters;
-    if (track.mode !== trip.mode) modeChanges++;
     if (track.distanceMeters < 50) belowMinimum++;
 
-    const mode = track.mode === trip.mode ? track.mode : `${trip.mode} → ${track.mode}`;
-    console.log(`${date}  ${km(trip.distanceMeters)} → ${km(track.distanceMeters)} km  ${mode}`);
+    console.log(`${date}  ${km(trip.distanceMeters)} → ${km(track.distanceMeters)} km`);
 
     if (apply) {
-      await prisma.trip.update({ where: { id: trip.id }, data: trackColumns(track, true) });
+      const { mode: _mode, ...columns } = trackColumns(track, true);
+      await prisma.trip.update({ where: { id: trip.id }, data: columns });
     }
   }
 
-  console.log(`\nTotalt ${km(before)} → ${km(after)} km. Modus endres på ${modeChanges} turer.`);
-  if (skipped > 0) console.log(`${skipped} turer uten nok punkter ble ikke rørt.`);
+  console.log(`\nTotalt ${km(before)} → ${km(after)} km. Turtype endres ikke.`);
+  if (skipped > 0) console.log(`${skipped} turer uten nok brukbare punkter ble ikke rørt.`);
   if (belowMinimum > 0) {
     console.log(`${belowMinimum} turer blir under 50 m. De beholdes, men ville ikke blitt lagret som nye turer.`);
   }
