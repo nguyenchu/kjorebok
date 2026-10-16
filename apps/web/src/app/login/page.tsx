@@ -56,6 +56,15 @@ export default function LoginPage() {
           {mode === "login" ? "Logg inn for å fortsette" : "Opprett ny konto"}
         </p>
 
+        <Link href="/demo" style={{
+          display: "block", textAlign: "center", padding: "0.9rem",
+          background: "var(--primary)", color: "#fff", borderRadius: "var(--radius)",
+          fontWeight: 700, marginBottom: "0.5rem",
+        }}>Prøv demo uten konto →</Link>
+        <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1.5rem" }}>
+          Utforsk turer og kart med fiktive eksempeldata.
+        </p>
+
         <form onSubmit={submit} style={{
           background: "var(--surface)", border: "1px solid var(--border)",
           borderRadius: "var(--radius)", padding: "1.5rem",

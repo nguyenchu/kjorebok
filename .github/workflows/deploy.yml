@@ -15,6 +15,12 @@ on:
           - portfolio-inspect
           - portfolio
 
+      portfolio_ref:
+        description: "Validated commit in nguyenchu/nguyenchu for portfolio deployment"
+        type: string
+        required: false
+        default: main
+
 permissions:
   contents: read
 
@@ -252,3 +258,51 @@ jobs:
                       if re.match(r'\s*(server_name|root|index|location|try_files)\b', line):
                           print(line.strip())
           PYTHON
+      - name: Check out portfolio source
+        if: github.event.inputs.target == 'portfolio'
+        uses: actions/checkout@v6
+        with:
+          repository: nguyenchu/nguyenchu
+          ref: ${{ inputs.portfolio_ref }}
+          path: portfolio-source
+      - name: Upload portfolio files
+        if: github.event.inputs.target == 'portfolio'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          REMOTE_STAGE=$(ssh "$DEPLOY_USER@$DEPLOY_HOST" 'mktemp -d /tmp/portfolio-deploy.XXXXXXXX')
+          echo "REMOTE_STAGE=$REMOTE_STAGE" >> "$GITHUB_ENV"
+          scp -r portfolio-source/site "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_STAGE/site"
+      - name: Publish portfolio with backup
+        if: github.event.inputs.target == 'portfolio'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$REMOTE_STAGE" "${{ github.run_id }}" <<'REMOTE'
+          set -euo pipefail
+          STAGE="$1/site"
+          ROOT=/var/www/html
+          BACKUP="$HOME/portfolio-backups/$2"
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import re
+          config = Path('/etc/nginx/sites-available/nguyenchu.com').read_text()
+          assert re.search(r'root\s+/var/www/html\s*;', config), 'Unexpected document root'
+          assert re.search(r'server_name\s+nguyenchu\.com(?:\s|;)', config), 'Unexpected host'
+          PYTHON
+          test -f "$ROOT/index.html"
+          mkdir -p "$BACKUP/prosjekter"
+          chmod 700 "$HOME/portfolio-backups" "$BACKUP"
+          for file in index.html styles.css favicon.svg prosjekter/kjorebok.html prosjekter/matkupp.html; do
+            if [ -f "$ROOT/$file" ]; then cp "$ROOT/$file" "$BACKUP/$file"; fi
+          done
+          sudo -n /usr/bin/mkdir -p "$ROOT/prosjekter"
+          for file in styles.css favicon.svg prosjekter/kjorebok.html prosjekter/matkupp.html index.html; do
+            sudo -n /usr/bin/cp "$STAGE/$file" "$ROOT/$file"
+          done
+          curl -fsS https://nguyenchu.com/ | grep -q 'mobil- og frontendutvikler'
+          curl -fsS https://nguyenchu.com/prosjekter/kjorebok.html | grep -q 'GPS-punkter'
+          echo "Portfolio deployed. Previous files backed up in $BACKUP"
+          REMOTE

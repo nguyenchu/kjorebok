@@ -5,12 +5,30 @@ mileage and tax purposes — available on both web and mobile, backed by a share
 API. Built as a production-style monorepo with CI/CD, containerized local
 development, and end-to-end mobile tests.
 
-> Live: [kjorebok.nguyenchu.com](https://kjorebok.nguyenchu.com) · Android APK published from CI
+> **[Try the interactive demo — no account needed](https://kjorebok.nguyenchu.com/demo)** · [Project walkthrough](https://nguyenchu.com/prosjekter/kjorebok.html) · [Live app](https://kjorebok.nguyenchu.com)
+
+## Explore in two minutes
+
+1. Open the demo, select a fictional trip, and inspect its example route.
+2. Change its purpose between work and private and watch the totals update.
+3. Filter the log and export the visible trips as CSV. Reset to restore the examples.
+
+The demo uses invented data and the existing web map component. It keeps edits in memory and makes no trip API calls. It does not demonstrate background GPS recording, authentication, or API-backed reports.
+
+For implementation details, start with [GPS processing](apps/api/src/lib/track), [shared domain types](packages/shared/src), and the [web demo](apps/web/src/app/demo).
+
+## Technical decisions and tradeoffs
+
+- **Expo for mobile, Next.js for web:** shared domain types support different interfaces for recording trips and reviewing history. Background location and permissions still require platform-specific device testing.
+- **Shared TypeScript package:** domain changes become visible across clients, but tighter coupling means changes need coordination. Runtime inputs are validated with Zod in the API; static types do not validate network data.
+- **GPS processing:** filtering, smoothing, stop detection, and map-line simplification address noisy raw positions. Aggressive filtering can hide genuine movement; permissive filtering retains drift. Track-processing tests exercise these behaviors.
+- **Separate API and database:** web and mobile use the same persisted domain. The tradeoff is operating the API, database, migrations, and deployments alongside the clients.
+
 
 ## Architecture
 
 A [Turborepo](https://turbo.build) monorepo with three apps and a shared package,
-so domain types and validation are written once and consumed everywhere:
+so domain types are shared across the clients and API:
 
 ```
 apps/
@@ -18,7 +36,7 @@ apps/
   web      Next.js (React) + Leaflet maps
   mobile   Expo / React Native (iOS + Android)
 packages/
-  shared   Types + Zod schemas shared across api, web and mobile
+  shared   Domain types and mileage rates shared across api, web and mobile
 ```
 
 ## Tech stack
@@ -28,12 +46,12 @@ packages/
 | **API**   | Fastify, Prisma ORM, PostgreSQL, JWT auth (`@fastify/jwt`, `bcryptjs`), Zod validation |
 | **Web**   | Next.js, React, React-Leaflet (trip maps), date-fns |
 | **Mobile**| Expo, React Native, Expo Router |
-| **Shared**| TypeScript types + Zod schemas reused across all apps |
+| **Shared**| TypeScript domain types + mileage rates reused across apps |
 | **Infra** | Turborepo, Docker Compose (local Postgres), GitHub Actions (deploy web/API + build & publish Android APK), Maestro (mobile E2E) |
 
 ## Highlights
 
-- **End-to-end type safety** — one `shared` package feeds types and Zod schemas to API, web and mobile, so a schema change surfaces everywhere at compile time.
+- **Shared domain types** — one `shared` package feeds API, web, and mobile; the API uses Zod for runtime input validation.
 - **Real CI/CD** — GitHub Actions builds and deploys web + API and produces a downloadable Android APK, versioned independently of the visible semver.
 - **Containerized local dev** — `docker compose up` gives a real Postgres; Prisma migrations are checked in.
 - **Automated mobile testing** — Maestro E2E flows (see `docs/maestro-mobile-testing.md`).
