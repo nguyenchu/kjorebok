@@ -12,6 +12,8 @@ on:
           - both
           - app
           - android
+          - portfolio-inspect
+          - portfolio
 
 permissions:
   contents: read
@@ -209,3 +211,44 @@ jobs:
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "test -w '$DEPLOY_DOWNLOAD_DIR'"
           scp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DOWNLOAD_DIR/android.apk"
           scp android-latest.json "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DOWNLOAD_DIR/android-latest.json"
+
+  portfolio:
+    name: Inspect or deploy personal portfolio
+    if: github.event.inputs.target == 'portfolio-inspect' || github.event.inputs.target == 'portfolio'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+      - name: Start SSH agent
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' | ssh-add -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+      - name: Add server host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/known_hosts
+      - name: Inspect public website configuration
+        if: github.event.inputs.target == 'portfolio-inspect'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" 'python3 -' <<'PYTHON'
+          from pathlib import Path
+          import re
+          for p in Path('/etc/nginx/sites-enabled').iterdir():
+              text = p.read_text()
+              if re.search(r'server_name\s+(?:www\.)?nguyenchu\.com(?:\s|;)', text):
+                  print('CONFIG:', p.resolve())
+                  for line in text.splitlines():
+                      if re.match(r'\s*(server_name|root|index|location|try_files)\b', line):
+                          print(line.strip())
+          PYTHON
