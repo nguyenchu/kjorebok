@@ -14,19 +14,35 @@ import {
 import { useLocalSearchParams, Stack } from "expo-router";
 import { WebView } from "react-native-webview";
 import { api } from "@/lib/api";
-import type { Trip, TripPurpose } from "@kjorebok/shared";
+import type { Trip, TripPurpose, TripStop } from "@kjorebok/shared";
 
-/** "Snitt 42 km/t · maks 78 km/t · 18 min i bevegelse", or "" before the trip is processed. */
-function formatMotion(trip: Pick<Trip, "avgMovingSpeedKmh" | "maxSpeedKmh" | "movingSeconds">): string {
+/** "Snitt 42 km/t · maks 78 km/t · 18 min i bevegelse · 4 min stopp", or "" before the trip is processed. */
+function formatMotion(
+  trip: Pick<Trip, "avgMovingSpeedKmh" | "maxSpeedKmh" | "movingSeconds" | "stoppedSeconds">,
+): string {
   const parts: string[] = [];
   if (trip.avgMovingSpeedKmh) parts.push(`Snitt ${Math.round(trip.avgMovingSpeedKmh)} km/t`);
   if (trip.maxSpeedKmh) parts.push(`maks ${Math.round(trip.maxSpeedKmh)} km/t`);
   if (trip.movingSeconds) parts.push(`${Math.round(trip.movingSeconds / 60)} min i bevegelse`);
+  // Under a minute rounds to "0 min", which reads as no stops at all.
+  if (trip.stoppedSeconds && trip.stoppedSeconds >= 60) {
+    parts.push(`${Math.round(trip.stoppedSeconds / 60)} min stopp`);
+  }
   return parts.join(" · ");
 }
 
-function buildMapHtml(coordinates: { lat: number; lng: number }[]): string {
+/** "Stopp 4 min · 12:03" */
+function stopLabel(stop: TripStop): string {
+  const minutes = Math.max(1, Math.round(stop.seconds / 60));
+  const time = new Date(stop.start).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+  return `Stopp ${minutes} min · ${time}`;
+}
+
+function buildMapHtml(coordinates: { lat: number; lng: number }[], stops: TripStop[]): string {
   const latlngs = JSON.stringify(coordinates.map((p) => [p.lat, p.lng]));
+  // Labels are built here rather than in the page, so they use the app's
+  // locale instead of whatever the WebView defaults to.
+  const stopMarkers = JSON.stringify(stops.map((s) => ({ lat: s.lat, lng: s.lng, label: stopLabel(s) })));
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -51,6 +67,11 @@ function buildMapHtml(coordinates: { lat: number; lng: number }[]): string {
       L.circleMarker(latlngs[0], { radius: 7, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }).addTo(map);
       L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }).addTo(map);
     }
+    ${stopMarkers}.forEach(function (stop) {
+      L.circleMarker([stop.lat, stop.lng], { radius: 6, color: '#b45309', fillColor: '#f59e0b', fillOpacity: 1, weight: 2 })
+        .bindPopup(stop.label)
+        .addTo(map);
+    });
   </script>
 </body>
 </html>`;
@@ -174,7 +195,7 @@ export default function TripDetailScreen() {
           {hasRoute && (
             <WebView
               style={styles.map}
-              source={{ html: buildMapHtml(trip.route) }}
+              source={{ html: buildMapHtml(trip.route, trip.stops ?? []) }}
               originWhitelist={["*"]}
               scrollEnabled={false}
             />

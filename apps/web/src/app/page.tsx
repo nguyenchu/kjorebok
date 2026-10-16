@@ -39,12 +39,18 @@ function formatDistance(meters: number) {
     : `${Math.round(meters)} m`;
 }
 
-/** "snitt 42 km/t · maks 78 km/t · 18 min i bevegelse", or "" before the trip is processed. */
-function formatMotion(trip: Pick<Trip, "avgMovingSpeedKmh" | "maxSpeedKmh" | "movingSeconds">) {
+/** "snitt 42 km/t · maks 78 km/t · 18 min i bevegelse · 4 min stopp", or "" before the trip is processed. */
+function formatMotion(
+  trip: Pick<Trip, "avgMovingSpeedKmh" | "maxSpeedKmh" | "movingSeconds" | "stoppedSeconds">,
+) {
   const parts: string[] = [];
   if (trip.avgMovingSpeedKmh) parts.push(`snitt ${Math.round(trip.avgMovingSpeedKmh)} km/t`);
   if (trip.maxSpeedKmh) parts.push(`maks ${Math.round(trip.maxSpeedKmh)} km/t`);
   if (trip.movingSeconds) parts.push(`${Math.round(trip.movingSeconds / 60)} min i bevegelse`);
+  // Under a minute rounds to "0 min", which reads as no stops at all.
+  if (trip.stoppedSeconds && trip.stoppedSeconds >= 60) {
+    parts.push(`${Math.round(trip.stoppedSeconds / 60)} min stopp`);
+  }
   return parts.join(" · ");
 }
 
@@ -1005,7 +1011,7 @@ export default function DashboardPage() {
                   Laster…
                 </div>
               )}
-              {mapTrip && <TripMap route={mapTrip.route} />}
+              {mapTrip && <TripMap route={mapTrip.route} stops={mapTrip.stops} />}
             </div>
           </div>
         </div>

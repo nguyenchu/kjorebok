@@ -1,12 +1,20 @@
 "use client";
 import { useEffect, useRef } from "react";
-import type { GpsPoint } from "@kjorebok/shared";
+import type { GpsPoint, TripStop } from "@kjorebok/shared";
 
 interface Props {
   route: GpsPoint[];
+  stops?: TripStop[] | null;
 }
 
-export default function TripMap({ route }: Props) {
+/** "Stopp 4 min · 12:03" */
+function stopLabel(stop: TripStop) {
+  const minutes = Math.max(1, Math.round(stop.seconds / 60));
+  const time = new Date(stop.start).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+  return `Stopp ${minutes} min · ${time}`;
+}
+
+export default function TripMap({ route, stops }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,12 +46,18 @@ export default function TripMap({ route }: Props) {
         L.circleMarker(latlngs[0], { radius: 7, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 1 }).addTo(map);
         L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: "#dc2626", fillColor: "#dc2626", fillOpacity: 1 }).addTo(map);
       }
+
+      for (const stop of stops ?? []) {
+        L.circleMarker([stop.lat, stop.lng], { radius: 6, color: "#b45309", fillColor: "#f59e0b", fillOpacity: 1, weight: 2 })
+          .bindTooltip(stopLabel(stop))
+          .addTo(map);
+      }
     });
 
     return () => {
       map?.remove();
     };
-  }, [route]);
+  }, [route, stops]);
 
   if (route.length === 0) {
     return (
