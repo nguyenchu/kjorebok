@@ -87,6 +87,18 @@ describe("processTrack: distance", () => {
     expect(result.stoppedSeconds).toBeLessThan(210);
   });
 
+  it("counts manoeuvring in a car park, which never leaves a small box", () => {
+    const route = new Route().straight(800, kmh(40));
+    for (let lap = 0; lap < 8; lap++) route.straight(25, kmh(12)).turn(180, 6, kmh(10));
+    route.straight(800, kmh(40));
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const result = processTrack(sample(route, { intervalSeconds: 1, accuracy: 8, seed }));
+
+      expect(result.stops).toHaveLength(0);
+      expect(relativeError(result.distanceMeters, route.trueDistance)).toBeLessThan(0.05);
+    }
+  });
+
   it("bridges a tunnel with a straight line and reports the gap", () => {
     const route = new Route().straight(3000, kmh(60));
     const points = sample(route, { intervalSeconds: 2, accuracy: 8, skip: [[60, 150]] });
