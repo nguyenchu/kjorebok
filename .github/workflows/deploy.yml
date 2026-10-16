@@ -293,13 +293,13 @@ jobs:
           assert re.search(r'server_name\s+nguyenchu\.com(?:\s|;)', config), 'Unexpected host'
           PYTHON
           test -f "$ROOT/index.html"
-          mkdir -p "$BACKUP/prosjekter"
+          mkdir -p "$BACKUP/prosjekter" "$BACKUP/images"
           chmod 700 "$HOME/portfolio-backups" "$BACKUP"
-          for file in index.html styles.css favicon.svg prosjekter/kjorebok.html prosjekter/matkupp.html; do
+          for file in index.html styles.css favicon.svg prosjekter/kjorebok.html prosjekter/matkupp.html images/kjorebok-demo.png; do
             if [ -f "$ROOT/$file" ]; then cp "$ROOT/$file" "$BACKUP/$file"; fi
           done
-          sudo -n /usr/bin/mkdir -p "$ROOT/prosjekter"
-          for file in styles.css favicon.svg prosjekter/kjorebok.html prosjekter/matkupp.html index.html; do
+          sudo -n /usr/bin/mkdir -p "$ROOT/prosjekter" "$ROOT/images"
+          for file in styles.css favicon.svg images/kjorebok-demo.png prosjekter/kjorebok.html prosjekter/matkupp.html index.html; do
             sudo -n /usr/bin/cp "$STAGE/$file" "$ROOT/$file"
           done
           curl -fsS https://nguyenchu.com/ | grep -q 'mobil- og frontendutvikler'
