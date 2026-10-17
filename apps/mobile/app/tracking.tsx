@@ -143,7 +143,8 @@ export default function TrackingScreen() {
   }, [activeTripId, hasToken, locationServicesEnabled, needsPermission, pendingPoints, taskSeemsStale, tracking]);
 
   const stateLabel: Record<string, string> = {
-    IDLE: "Venter på bevegelse",
+    RESTING: "Hviler – GPS er av",
+    IDLE: "Ser etter kjøring",
     DETECTING_START: "Sjekker om ny tur har startet",
     RECORDING: "Registrerer tur",
     DETECTING_STOP: "Sjekker om turen er avsluttet",

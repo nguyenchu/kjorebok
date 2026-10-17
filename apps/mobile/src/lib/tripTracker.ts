@@ -1,7 +1,12 @@
 /**
  * Auto trip detection using expo-location background tasks.
  *
- * Tracking is intended to stay on continuously once permissions are granted.
+ * Tracking stays registered once permissions are granted, but GPS only runs
+ * while a trip may be happening. Between trips the tracker rests: a geofence
+ * around where the car stopped wakes it, and the location task drops to a
+ * low-power, network-only profile. The task is never stopped while resting
+ * because Android cannot start its foreground service again from the
+ * background — switching the profile of a running task is all it can do.
  *
  * Background invocations get a small, interruptible CPU budget — especially on
  * iOS — so the whole tracker state is read once into a snapshot, mutated in
@@ -14,14 +19,34 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as TaskManager from "expo-task-manager";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { api, getToken } from "./api";
 import type { GpsPoint } from "@kjorebok/shared";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
+const REST_GEOFENCE_TASK = "kjorebok-rest-geofence";
 
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
-const SYNC_BATCH_SIZE = 25;
+const SYNC_BATCH_SIZE = 100;
+/**
+ * Points are uploaded in bursts rather than per fix so the radio can sleep
+ * between them. Five minutes stays well inside the server's 30-minute stale
+ * trip cleanup, which would otherwise close a long trip that had only sent
+ * its start.
+ */
+const FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+const FLUSH_POINT_THRESHOLD = 100;
+const REST_GEOFENCE_RADIUS_METERS = 200;
+/** How long GPS may look for a trip after waking before it rests again. */
+const DETECT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Loose enough for indoor fixes; the geofence radius absorbs the error. */
+const REST_ANCHOR_MAX_ACCURACY_METERS = 100;
+/**
+ * The resting position becomes the next trip's start point, recovering the
+ * distance driven before the geofence fired. Further than this and it is more
+ * likely stale than a real departure point.
+ */
+const MAX_REST_ANCHOR_GAP_METERS = 3000;
 const MAX_PENDING_POINTS = 2000;
 const MAX_USABLE_ACCURACY_METERS = 40;
 const MAX_ROUTE_ACCURACY_METERS = 30;
@@ -48,7 +73,7 @@ const POSITION_WINDOW_MAX_SAMPLES = 60;
 const TRIP_NOTIFICATION_CHANNEL = "trips";
 const BACKGROUND_NOTIFICATION_CHANNEL = "com.nguyenchu.kjorebok:kjorebok-background-location";
 
-type TrackerState = "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
+type TrackerState = "RESTING" | "IDLE" | "DETECTING_START" | "RECORDING" | "DETECTING_STOP";
 
 const STATE_KEY = "tracker_state";
 const ACTIVE_TRIP_KEY = "tracker_active_trip_id";
@@ -67,6 +92,9 @@ const START_FAIL_COUNT_KEY = "tracker_start_fail_count";
 const LAST_ROUTE_POINT_AT_KEY = "tracker_last_route_point_at";
 const SELECTED_VEHICLE_KEY = "tracker_selected_vehicle";
 const LOCATION_MODE_KEY = "tracker_location_mode";
+const REST_ANCHOR_KEY = "tracker_rest_anchor";
+const DETECT_SINCE_KEY = "tracker_detect_since";
+const LAST_FLUSH_AT_KEY = "tracker_last_flush_at";
 const MAX_START_FAIL_COUNT = 6;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
@@ -88,6 +116,9 @@ const SNAPSHOT_KEYS = [
   LAST_ROUTE_POINT_AT_KEY,
   SELECTED_VEHICLE_KEY,
   LOCATION_MODE_KEY,
+  REST_ANCHOR_KEY,
+  DETECT_SINCE_KEY,
+  LAST_FLUSH_AT_KEY,
 ] as const;
 
 const DEFAULT_START_REASON = "Telefonen venter på tydelig bevegelse.";
@@ -162,6 +193,11 @@ interface Snapshot {
   selectedVehicleId: string | null;
   /** Last applied location profile, so a restart is only paid for on change. */
   locationMode: LocationMode | null;
+  /** Where the car was parked while resting; the geofence is centred on it. */
+  restAnchor: GpsPoint | null;
+  /** When GPS started looking for a trip, so it can rest again if none comes. */
+  detectSince: number | null;
+  lastFlushAt: number | null;
   dirty: Set<string>;
 }
 
@@ -213,6 +249,7 @@ async function loadSnapshot(): Promise<Snapshot> {
   const positionWindow = parseJson<PositionSample[]>(read(POSITION_WINDOW_KEY), []);
   const pendingPoints = parseJson<GpsPoint[]>(read(PENDING_POINTS_KEY), []);
   const logEntries = parseJson<TrackerLogEntry[]>(read(LOG_ENTRIES_KEY), []);
+  const restAnchor = parseJson<GpsPoint | null>(read(REST_ANCHOR_KEY), null);
 
   return {
     state: (read(STATE_KEY) ?? "IDLE") as TrackerState,
@@ -231,6 +268,9 @@ async function loadSnapshot(): Promise<Snapshot> {
     lastRoutePointAt: parseNumber(read(LAST_ROUTE_POINT_AT_KEY)),
     selectedVehicleId: read(SELECTED_VEHICLE_KEY),
     locationMode: (read(LOCATION_MODE_KEY) as LocationMode | null) ?? null,
+    restAnchor: isGpsPoint(restAnchor) ? restAnchor : null,
+    detectSince: parseNumber(read(DETECT_SINCE_KEY)),
+    lastFlushAt: parseNumber(read(LAST_FLUSH_AT_KEY)),
     dirty: new Set(),
   };
 }
@@ -269,6 +309,12 @@ function serializeValue(snapshot: Snapshot, key: string): string | null {
       return snapshot.selectedVehicleId;
     case LOCATION_MODE_KEY:
       return snapshot.locationMode;
+    case REST_ANCHOR_KEY:
+      return snapshot.restAnchor ? JSON.stringify(snapshot.restAnchor) : null;
+    case DETECT_SINCE_KEY:
+      return snapshot.detectSince === null ? null : String(snapshot.detectSince);
+    case LAST_FLUSH_AT_KEY:
+      return snapshot.lastFlushAt === null ? null : String(snapshot.lastFlushAt);
     default:
       return null;
   }
@@ -570,43 +616,102 @@ async function ensureNotificationChannel(): Promise<void> {
  * wrong end time, and driving again within that window merged two trips into
  * one.
  *
- * Filtering costs nothing while actually driving anyway: at 80 km/h the GPS fix
- * rate is the real limit, not the 10 m filter. Idle keeps a filter purely to
- * save battery — there we only need to notice that movement has begun.
+ * The same holds while looking for a trip after waking from rest: a filter
+ * would stop updates when the phone is put down, and the detect timeout that
+ * sends it back to rest would never be evaluated. The 10 s interval (Android
+ * only — iOS ignores it) is what saves battery instead.
+ *
+ * "rest" needs no GPS at all: the geofence does the waking, and the low-power
+ * network fixes are only a fallback for a geofence exit the OS never delivers.
  */
-type LocationMode = "idle" | "active";
+type LocationMode = "rest" | "gps";
 
-const IDLE_DISTANCE_INTERVAL_METERS = 20;
+const GPS_TIME_INTERVAL_MS = 10 * 1000;
+const REST_TIME_INTERVAL_MS = 5 * 60 * 1000;
+const REST_DISTANCE_INTERVAL_METERS = 500;
 
 async function startBackgroundLocationUpdates(mode: LocationMode): Promise<void> {
+  const resting = mode === "rest";
+  // Android throws if asked for the foreground service while the app is in
+  // the background, even when only changing a running task's options — so
+  // every background profile switch used to fail there. Left out, the location
+  // request is still swapped and the running service is left alone.
+  const canStartForegroundService = Platform.OS !== "android" || AppState.currentState === "active";
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-    accuracy: Location.Accuracy.High,
-    timeInterval: mode === "active" ? 2000 : 10000,
-    distanceInterval: mode === "active" ? 0 : IDLE_DISTANCE_INTERVAL_METERS,
-    showsBackgroundLocationIndicator: true,
+    accuracy: resting ? Location.Accuracy.Lowest : Location.Accuracy.High,
+    timeInterval: resting ? REST_TIME_INTERVAL_MS : GPS_TIME_INTERVAL_MS,
+    distanceInterval: resting ? REST_DISTANCE_INTERVAL_METERS : 0,
+    showsBackgroundLocationIndicator: !resting,
     // Without these iOS decides on its own that the user has stopped, pauses
     // location updates, and never resumes them — the app then misses every
     // trip until it is manually reopened.
     activityType: Location.ActivityType.AutomotiveNavigation,
     pausesUpdatesAutomatically: false,
-    foregroundService: {
-      notificationTitle: "Kjørebok",
-      notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
-    },
+    ...(canStartForegroundService
+      ? {
+          foregroundService: {
+            notificationTitle: "Kjørebok",
+            notificationBody: "Automatisk tursporing kjører i bakgrunnen.",
+          },
+        }
+      : {}),
   });
 }
 
 function modeForState(state: TrackerState): LocationMode {
-  return state === "RECORDING" || state === "DETECTING_STOP" ? "active" : "idle";
+  return state === "RESTING" ? "rest" : "gps";
 }
 
-/** Restarts location updates only when the mode actually changes. */
+/** Failure leaves rest relying on the low-power fixes alone, so it only warns. */
+async function startRestGeofence(snapshot: Snapshot, anchor: GpsPoint): Promise<void> {
+  try {
+    await Location.startGeofencingAsync(REST_GEOFENCE_TASK, [
+      {
+        identifier: "rest",
+        latitude: anchor.lat,
+        longitude: anchor.lng,
+        radius: REST_GEOFENCE_RADIUS_METERS,
+        notifyOnEnter: false,
+        notifyOnExit: true,
+      },
+    ]);
+  } catch (error) {
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    log(snapshot, `Kunne ikke legge hvilesone${message}`, "warn");
+  }
+}
+
+async function stopRestGeofence(): Promise<void> {
+  const started = await Location.hasStartedGeofencingAsync(REST_GEOFENCE_TASK).catch(() => false);
+  if (started) {
+    await Location.stopGeofencingAsync(REST_GEOFENCE_TASK).catch(() => undefined);
+  }
+}
+
+/**
+ * Restarts location updates only when the mode actually changes. Going to rest
+ * arms the geofence before GPS goes off, and waking turns GPS on before the
+ * geofence goes, so there is never a moment with neither.
+ */
 async function applyLocationMode(snapshot: Snapshot): Promise<void> {
+  if (snapshot.state === "RESTING" && !snapshot.restAnchor) {
+    // Nothing to put a geofence around — look for the next trip with GPS.
+    snapshot.state = "IDLE";
+    snapshot.detectSince = null;
+    touch(snapshot, STATE_KEY, DETECT_SINCE_KEY);
+  }
+
   const wanted = modeForState(snapshot.state);
   if (snapshot.locationMode === wanted) return;
 
   try {
-    await startBackgroundLocationUpdates(wanted);
+    if (wanted === "rest" && snapshot.restAnchor) {
+      await startRestGeofence(snapshot, snapshot.restAnchor);
+      await startBackgroundLocationUpdates(wanted);
+    } else {
+      await startBackgroundLocationUpdates(wanted);
+      await stopRestGeofence();
+    }
     snapshot.locationMode = wanted;
     touch(snapshot, LOCATION_MODE_KEY);
   } catch (error) {
@@ -615,22 +720,120 @@ async function applyLocationMode(snapshot: Snapshot): Promise<void> {
   }
 }
 
-async function startTrip(snapshot: Snapshot, point: GpsPoint): Promise<boolean> {
+function enterRest(snapshot: Snapshot, anchor: GpsPoint): void {
+  snapshot.state = "RESTING";
+  snapshot.restAnchor = anchor;
+  snapshot.detectSince = null;
+  snapshot.positionWindow = [];
+  snapshot.startCandidateCount = 0;
+  snapshot.startFailCount = 0;
+  touch(
+    snapshot,
+    STATE_KEY,
+    REST_ANCHOR_KEY,
+    DETECT_SINCE_KEY,
+    POSITION_WINDOW_KEY,
+    START_CANDIDATE_COUNT_KEY,
+    START_FAIL_COUNT_KEY
+  );
+  setStartReason(snapshot, "GPS hviler. Sporingen starter når du kjører fra stedet.");
+}
+
+function wakeFromRest(snapshot: Snapshot, reason: string): void {
+  snapshot.state = "IDLE";
+  snapshot.detectSince = Date.now();
+  touch(snapshot, STATE_KEY, DETECT_SINCE_KEY);
+  setStartReason(snapshot, "Ser etter kjøring med GPS.");
+  log(snapshot, reason);
+}
+
+/**
+ * Sends the tracker back to rest once GPS has looked for a trip long enough
+ * without finding one — after a walk, say. Indoor fixes rarely get as tight as
+ * driving needs, so the anchor accepts a looser one, and after three timeouts
+ * any fix at all rather than leaving GPS on indefinitely.
+ */
+function maybeRest(snapshot: Snapshot, point: GpsPoint, nowMs: number): boolean {
+  if (snapshot.detectSince === null) return false;
+
+  const elapsed = nowMs - snapshot.detectSince;
+  if (elapsed < DETECT_TIMEOUT_MS) return false;
+
+  const maxAccuracy =
+    elapsed >= 3 * DETECT_TIMEOUT_MS ? Number.POSITIVE_INFINITY : REST_ANCHOR_MAX_ACCURACY_METERS;
+  if (point.accuracy <= 0 || point.accuracy > maxAccuracy) return false;
+
+  enterRest(snapshot, point);
+  log(snapshot, "Ingen kjøring oppdaget. GPS hviler igjen.");
+  return true;
+}
+
+/**
+ * Uploads in bursts. Each attempt counts, not just successes, so a dead
+ * network is retried every interval rather than on every fix.
+ */
+async function maybeFlush(snapshot: Snapshot, tripId: string, context: string): Promise<void> {
+  if (snapshot.pendingPoints.length === 0) return;
+
+  const now = Date.now();
+  const due =
+    snapshot.pendingPoints.length >= FLUSH_POINT_THRESHOLD ||
+    snapshot.lastFlushAt === null ||
+    now - snapshot.lastFlushAt >= FLUSH_INTERVAL_MS;
+  if (!due) return;
+
+  snapshot.lastFlushAt = now;
+  touch(snapshot, LAST_FLUSH_AT_KEY);
+  await flushWithRecovery(snapshot, tripId, context);
+}
+
+/**
+ * After waking from rest the car is already some way past where it was
+ * parked, so the trip starts from the rest anchor instead, timed at the
+ * moment the geofence fired. The current fix becomes the first route point.
+ */
+function departurePoint(snapshot: Snapshot, point: GpsPoint): GpsPoint | null {
+  const anchor = snapshot.restAnchor;
+  if (!anchor || haversineMeters(anchor, point) > MAX_REST_ANCHOR_GAP_METERS) return null;
+
+  const pointTime = new Date(point.timestamp).getTime();
+  const departedAt = Math.min(snapshot.detectSince ?? pointTime, pointTime - 1000);
+  return {
+    lat: anchor.lat,
+    lng: anchor.lng,
+    speed: 0,
+    heading: 0,
+    accuracy: anchor.accuracy,
+    timestamp: new Date(departedAt).toISOString(),
+  };
+}
+
+async function startTrip(
+  snapshot: Snapshot,
+  point: GpsPoint,
+  { fromRestAnchor }: { fromRestAnchor: boolean }
+): Promise<boolean> {
   try {
-    const startAddress = await reverseGeocode(point);
+    const departure = fromRestAnchor ? departurePoint(snapshot, point) : null;
+    const startPoint = departure ?? point;
+    const startAddress = await reverseGeocode(startPoint);
     const trip = await api.post<{ id: string }>("/trips", {
-      startPoint: point,
+      startPoint,
       startAddress,
       ...(snapshot.selectedVehicleId ? { vehicleId: snapshot.selectedVehicleId } : {}),
     });
 
-    snapshot.pendingPoints = [];
+    snapshot.pendingPoints = departure ? [point] : [];
     snapshot.lastPoint = point;
     snapshot.lastRoutePointAt = new Date(point.timestamp).getTime();
     snapshot.activeTripId = trip.id;
     snapshot.state = "RECORDING";
     snapshot.startCandidateCount = 0;
     snapshot.startFailCount = 0;
+    snapshot.restAnchor = null;
+    snapshot.detectSince = null;
+    snapshot.lastFlushAt = Date.now();
+    touch(snapshot, REST_ANCHOR_KEY, DETECT_SINCE_KEY, LAST_FLUSH_AT_KEY);
     markSyncSuccess(snapshot);
     setStartReason(snapshot, "Tur er aktiv.");
     log(snapshot, "Tur startet automatisk.");
@@ -668,10 +871,14 @@ function resetActiveTripState(snapshot: Snapshot): void {
   snapshot.startFailCount = 0;
   snapshot.startCandidateCount = 0;
   snapshot.lastRoutePointAt = null;
+  snapshot.detectSince = null;
+  snapshot.lastFlushAt = null;
   snapshot.state = "IDLE";
   setStartReason(snapshot, DEFAULT_START_REASON);
   touch(
     snapshot,
+    DETECT_SINCE_KEY,
+    LAST_FLUSH_AT_KEY,
     PENDING_POINTS_KEY,
     ACTIVE_TRIP_KEY,
     STOP_TIME_KEY,
@@ -700,6 +907,7 @@ async function finishTrip(snapshot: Snapshot, tripId: string, endPoint: GpsPoint
     markSyncSuccess(snapshot);
     log(snapshot, "Tur fullført og sendt til server.");
     resetActiveTripState(snapshot);
+    enterRest(snapshot, endPoint);
 
     // result is null if server deleted the trip (too short)
     if (result && typeof result.distanceMeters === "number" && result.distanceMeters >= 50) {
@@ -762,8 +970,27 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
   await closeStaleTrip(snapshot, Date.now()).catch(() => undefined);
 
   switch (snapshot.state) {
+    case "RESTING": {
+      // Only the low-power fallback reaches here; a geofence exit wakes the
+      // tracker through its own task.
+      const anchor = snapshot.restAnchor;
+      if (
+        anchor &&
+        point.accuracy > 0 &&
+        haversineMeters(anchor, point) - point.accuracy > REST_GEOFENCE_RADIUS_METERS
+      ) {
+        wakeFromRest(snapshot, "Posisjonen har flyttet seg fra hvilestedet. Starter GPS.");
+      }
+      break;
+    }
+
     case "IDLE": {
+      if (snapshot.detectSince === null) {
+        snapshot.detectSince = nowMs;
+        touch(snapshot, DETECT_SINCE_KEY);
+      }
       if (!hasGoodAccuracy) {
+        if (maybeRest(snapshot, point, nowMs)) break;
         setStartReason(
           snapshot,
           `Venter på bedre GPS-nøyaktighet. Siste måling var ${Math.round(point.accuracy)} meter.`
@@ -776,7 +1003,7 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
         touch(snapshot, STATE_KEY, START_CANDIDATE_COUNT_KEY);
         setStartReason(snapshot, "Oppdaget bevegelse. Bekrefter med ett punkt til før turen starter.");
         log(snapshot, "Oppdaget bevegelse som kan starte tur.");
-      } else {
+      } else if (!maybeRest(snapshot, point, nowMs)) {
         setStartReason(snapshot, "Venter på tydelig bevegelse før tur starter automatisk.");
       }
       break;
@@ -784,6 +1011,7 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
 
     case "DETECTING_START": {
       if (!hasGoodAccuracy) {
+        if (maybeRest(snapshot, point, nowMs)) break;
         setStartReason(
           snapshot,
           `Venter på bedre GPS-nøyaktighet (${Math.round(point.accuracy)} m) før tur kan starte.`
@@ -793,7 +1021,7 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
       if (motion.isMoving) {
         snapshot.startFailCount = 0;
         touch(snapshot, START_FAIL_COUNT_KEY);
-        await startTrip(snapshot, point);
+        await startTrip(snapshot, point, { fromRestAnchor: true });
       } else {
         const failCount = snapshot.startFailCount + 1;
         if (failCount >= MAX_START_FAIL_COUNT) {
@@ -822,7 +1050,7 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
       }
 
       enqueuePoint(snapshot, point, nowMs);
-      await flushWithRecovery(snapshot, tripId, "Kunne ikke sende punkter");
+      await maybeFlush(snapshot, tripId, "Kunne ikke sende punkter");
 
       if (motion.isStationary) {
         snapshot.state = "DETECTING_STOP";
@@ -851,7 +1079,7 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
         snapshot.state = "RECORDING";
         snapshot.stopTime = null;
         touch(snapshot, STATE_KEY, STOP_TIME_KEY);
-        await flushWithRecovery(snapshot, tripId, "Kunne ikke sende punkter etter stopp");
+        await maybeFlush(snapshot, tripId, "Kunne ikke sende punkter etter stopp");
         setStartReason(snapshot, "Tur fortsetter.");
         log(snapshot, "Tur fortsetter etter kort stopp.");
         return;
@@ -923,6 +1151,33 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   });
 });
 
+TaskManager.defineTask(REST_GEOFENCE_TASK, async ({ data, error }) => {
+  if (error) {
+    await serialize(async () => {
+      const snapshot = await loadSnapshot();
+      log(snapshot, `Hvilesonen feilet: ${error.message}`, "error");
+      await saveSnapshot(snapshot);
+    });
+    return;
+  }
+
+  const { eventType } = (data ?? {}) as { eventType?: Location.GeofencingEventType };
+  if (eventType !== Location.GeofencingEventType.Exit) return;
+
+  await serialize(async () => {
+    await markTaskHeartbeat();
+    const snapshot = await loadSnapshot();
+    try {
+      if (snapshot.state === "RESTING") {
+        wakeFromRest(snapshot, "Forlot hvilesonen. Starter GPS.");
+      }
+    } finally {
+      await applyLocationMode(snapshot);
+      await saveSnapshot(snapshot);
+    }
+  });
+});
+
 export async function requestPermissions(): Promise<boolean> {
   const { status: notifStatus } = await Notifications.getPermissionsAsync();
   if (notifStatus !== "granted") {
@@ -973,32 +1228,32 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
         log(snapshot, "Posisjonstjenester er av på telefonen.", "warn");
       }
 
-      const mode = modeForState(snapshot.state);
+      // First, so a trip it closes picks rest below — and so Android's stop and
+      // restart are not split by a network round trip.
+      await closeStaleTrip(snapshot, Date.now()).catch(() => {});
+
       const isRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
         () => false
       );
       if (!isRunning) {
-        await startBackgroundLocationUpdates(mode);
-        snapshot.locationMode = mode;
-        touch(snapshot, LOCATION_MODE_KEY);
-        setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
         log(snapshot, "Bakgrunnssporing ble startet.");
       } else if (Platform.OS === "android") {
         await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
-        await startBackgroundLocationUpdates(mode);
-        snapshot.locationMode = mode;
-        touch(snapshot, LOCATION_MODE_KEY);
-        setStartReason(snapshot, "Bakgrunnssporing ble startet på nytt. Telefonen følger med etter ny tur.");
         log(snapshot, "Bakgrunnssporing ble startet på nytt for å gjenopprette bakgrunnsvarsel.");
       } else {
-        // A restart the app did not make (or a crash) can leave the filter out
-        // of step with the state it should match.
-        await applyLocationMode(snapshot);
-        setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
         log(snapshot, "Bakgrunnssporing er allerede aktiv.");
       }
 
-      await closeStaleTrip(snapshot, Date.now()).catch(() => {});
+      // Always reapplied here, in the foreground, where Android may start its
+      // service: it also re-arms a rest geofence the OS dropped on reboot. On
+      // iOS a running task only needs it when the profile is out of step.
+      if (!isRunning || Platform.OS === "android" || snapshot.state === "RESTING") {
+        snapshot.locationMode = null;
+      }
+      await applyLocationMode(snapshot);
+      if (snapshot.state !== "RESTING") {
+        setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
+      }
 
       if (snapshot.activeTripId) {
         await flushWithRecovery(snapshot, snapshot.activeTripId, "Kunne ikke sende ventende punkter ved oppstart");
@@ -1036,6 +1291,8 @@ export async function syncActiveTrip(): Promise<void> {
         throw error;
       }
     } finally {
+      // A stale trip closed above sends the tracker to rest.
+      await applyLocationMode(snapshot);
       await saveSnapshot(snapshot);
     }
   });
@@ -1060,7 +1317,8 @@ export async function startTripManually(): Promise<void> {
       }
 
       const point = toGpsPoint(location);
-      const started = await startTrip(snapshot, point);
+      // The user is starting it here and now — a rest anchor could be stale.
+      const started = await startTrip(snapshot, point, { fromRestAnchor: false });
       if (!started) {
         throw new Error("Kunne ikke starte tur manuelt.");
       }
@@ -1117,14 +1375,16 @@ export async function stopTracking(): Promise<void> {
     if (isRunning) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     }
+    await stopRestGeofence();
 
     const snapshot = await loadSnapshot();
     resetActiveTripState(snapshot);
     snapshot.lastSpeed = null;
     snapshot.lastAccuracy = null;
+    snapshot.restAnchor = null;
     // Updates are off, so no profile is in force — the next start must apply one.
     snapshot.locationMode = null;
-    touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY, LOCATION_MODE_KEY);
+    touch(snapshot, LAST_SPEED_KEY, LAST_ACCURACY_KEY, LOCATION_MODE_KEY, REST_ANCHOR_KEY);
     log(snapshot, "Bakgrunnssporing ble stoppet.", "warn");
     setStartReason(snapshot, "Bakgrunnssporing er stoppet.");
     await saveSnapshot(snapshot);

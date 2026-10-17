@@ -44,7 +44,10 @@ export function assessTrackerHealth(tracker: TrackerDiagnostics): TrackerHealth 
   } = tracker;
 
   const needsPermission = foregroundPermission !== "granted" || backgroundPermission !== "granted";
-  const taskSeemsStale = trackingEnabled && isOlderThan(lastTaskAt, STALE_TASK_MS);
+  // A resting tracker only hears from the OS when the phone moves, so silence
+  // there is the expected outcome rather than a killed task.
+  const taskSeemsStale =
+    trackingEnabled && state !== "RESTING" && isOlderThan(lastTaskAt, STALE_TASK_MS);
   const needsAttention =
     !hasToken || !locationServicesEnabled || needsPermission || !trackingEnabled || taskSeemsStale;
 
@@ -115,6 +118,15 @@ export function assessTrackerHealth(tracker: TrackerDiagnostics): TrackerHealth 
         headline: "Tur pågår",
         summary: "En tur er aktiv nå. Appen følger med til turen stopper eller blir sendt.",
         shortStatus: "Tur pågår",
+      };
+    }
+
+    if (state === "RESTING") {
+      return {
+        headline: "Klar til automatisk turstart",
+        summary:
+          "GPS-en er av mens telefonen ligger i ro. Når du kjører fra stedet, starter sporingen automatisk.",
+        shortStatus: "Aktiv · GPS hviler",
       };
     }
 
