@@ -9,6 +9,7 @@ import ExpoModulesCore
 public class CarShortcutModule: Module {
   // Must match KjorebokCarIntents.swift.
   private static let pendingKey = "kjorebok.carShortcut.pending"
+  private static let vehiclesKey = "kjorebok.carShortcut.vehicles"
   private static let notification = Notification.Name("KjorebokCarShortcut")
 
   private var observer: NSObjectProtocol?
@@ -30,6 +31,12 @@ public class CarShortcutModule: Module {
       let pending = defaults.array(forKey: Self.pendingKey) as? [[String: Any]] ?? []
       defaults.removeObject(forKey: Self.pendingKey)
       return pending
+    }
+
+    // What Shortcuts offers for the "Sitter i bilen" vehicle parameter.
+    Function("setVehicles") { (vehicles: [[String: Any]]) in
+      let valid = vehicles.filter { $0["id"] is String && $0["label"] is String }
+      UserDefaults.standard.set(valid, forKey: Self.vehiclesKey)
     }
 
     OnStartObserving {

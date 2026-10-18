@@ -2,13 +2,22 @@ import { requireOptionalNativeModule, type EventSubscription } from "expo-module
 
 export interface CarShortcutEvent {
   type: "connected" | "disconnected";
+  /** The vehicle picked in the automation; absent when none was. */
+  vehicleId?: string;
   /** Wall-clock milliseconds. */
   timestamp: number;
+}
+
+export interface ShortcutVehicle {
+  id: string;
+  label: string;
+  registration: string;
 }
 
 interface NativeCarShortcut {
   isAvailable(): boolean;
   consumePending(): CarShortcutEvent[];
+  setVehicles(vehicles: ShortcutVehicle[]): void;
   addListener(eventName: "onCarShortcut", listener: () => void): EventSubscription;
 }
 
@@ -33,6 +42,15 @@ export function consumeCarShortcutEvents(): CarShortcutEvent[] {
     return native?.consumePending() ?? [];
   } catch {
     return [];
+  }
+}
+
+/** The vehicles Shortcuts offers to pick from in "Sitter i bilen". */
+export function setCarShortcutVehicles(vehicles: ShortcutVehicle[]): void {
+  try {
+    native?.setVehicles(vehicles);
+  } catch {
+    // Best-effort: the automation then falls back to the default vehicle.
   }
 }
 

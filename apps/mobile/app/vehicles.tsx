@@ -21,6 +21,7 @@ import {
   listPairedDevicesForCar,
   setCarDevice,
   setSelectedVehicleId,
+  syncCarShortcutVehicles,
   type CarDevice,
   type PairedDevice,
 } from "@/lib/tripTracker";
@@ -58,6 +59,9 @@ export default function VehiclesScreen() {
     try {
       const result = await api.get<Vehicle[]>("/vehicles");
       setVehicles(result);
+      syncCarShortcutVehicles(
+        result.map(({ id, label, registration }) => ({ id, label, registration }))
+      );
       setCarDevices(await getCarDevices());
       const fallback = result.find((vehicle) => vehicle.isDefault) ?? result[0] ?? null;
       await setSelectedVehicleId(fallback?.id ?? null);
@@ -206,7 +210,7 @@ export default function VehiclesScreen() {
               <Text style={styles.stepText}>
                 1. Åpne Snarveier, velg Automatisering og trykk +.{"\n"}
                 2. Velg Bluetooth, velg bilen og «Er tilkoblet». Velg «Kjør umiddelbart».{"\n"}
-                3. Legg til handlingen «Sitter i bilen» fra Kjørebok.{"\n"}
+                3. Legg til handlingen «Sitter i bilen» fra Kjørebok, og velg kjøretøyet.{"\n"}
                 4. Lag gjerne en til med «Er frakoblet» og «Gått ut av bilen», så avsluttes turen raskere.
               </Text>
               <View style={styles.cardActions}>

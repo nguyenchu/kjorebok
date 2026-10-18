@@ -12,18 +12,57 @@ import Foundation
 private enum KjorebokCarShortcut {
   // Must match CarShortcutModule.swift.
   static let pendingKey = "kjorebok.carShortcut.pending"
+  static let vehiclesKey = "kjorebok.carShortcut.vehicles"
   static let notification = Notification.Name("KjorebokCarShortcut")
   static let maxPending = 10
 
-  static func record(connected: Bool) {
-    let event: [String: Any] = [
+  /** The user's vehicles as the app last synced them; Shortcuts offers these. */
+  @available(iOS 16.0, *)
+  static func vehicles() -> [VehicleEntity] {
+    let stored = UserDefaults.standard.array(forKey: vehiclesKey) as? [[String: Any]] ?? []
+    return stored.compactMap { vehicle in
+      guard let id = vehicle["id"] as? String, let label = vehicle["label"] as? String else { return nil }
+      return VehicleEntity(id: id, label: label, registration: vehicle["registration"] as? String ?? "")
+    }
+  }
+
+  static func record(connected: Bool, vehicleId: String? = nil) {
+    var event: [String: Any] = [
       "type": connected ? "connected" : "disconnected",
       "timestamp": Date().timeIntervalSince1970 * 1000,
     ]
+    if let vehicleId {
+      event["vehicleId"] = vehicleId
+    }
     var pending = UserDefaults.standard.array(forKey: pendingKey) as? [[String: Any]] ?? []
     pending.append(event)
     UserDefaults.standard.set(Array(pending.suffix(maxPending)), forKey: pendingKey)
     NotificationCenter.default.post(name: notification, object: nil)
+  }
+}
+
+@available(iOS 16.0, *)
+struct VehicleEntity: AppEntity {
+  static var typeDisplayRepresentation: TypeDisplayRepresentation = "Kjøretøy"
+  static var defaultQuery = VehicleQuery()
+
+  let id: String
+  let label: String
+  let registration: String
+
+  var displayRepresentation: DisplayRepresentation {
+    DisplayRepresentation(title: "\(label)", subtitle: "\(registration)")
+  }
+}
+
+@available(iOS 16.0, *)
+struct VehicleQuery: EntityQuery {
+  func entities(for identifiers: [String]) async throws -> [VehicleEntity] {
+    KjorebokCarShortcut.vehicles().filter { identifiers.contains($0.id) }
+  }
+
+  func suggestedEntities() async throws -> [VehicleEntity] {
+    KjorebokCarShortcut.vehicles()
   }
 }
 
@@ -35,8 +74,18 @@ struct CarConnectedIntent: AppIntent {
   )
   static var openAppWhenRun = false
 
+  @Parameter(
+    title: "Kjøretøy",
+    description: "Turen registreres på dette kjøretøyet. Uten valg brukes standardkjøretøyet."
+  )
+  var vehicle: VehicleEntity?
+
+  static var parameterSummary: some ParameterSummary {
+    Summary("Sitter i \(\.$vehicle)")
+  }
+
   func perform() async throws -> some IntentResult {
-    KjorebokCarShortcut.record(connected: true)
+    KjorebokCarShortcut.record(connected: true, vehicleId: vehicle?.id)
     return .result()
   }
 }

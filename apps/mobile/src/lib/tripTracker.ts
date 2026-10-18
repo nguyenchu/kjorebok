@@ -47,6 +47,8 @@ import {
   addCarShortcutListener,
   consumeCarShortcutEvents,
   isCarShortcutAvailable,
+  setCarShortcutVehicles,
+  type ShortcutVehicle,
 } from "../../modules/car-shortcut";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
@@ -651,6 +653,10 @@ async function flushPendingPoints(snapshot: Snapshot, tripId: string): Promise<v
   }
 }
 
+function isUnknownVehicleError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Ukjent kjøretøy";
+}
+
 function isMissingActiveTripError(error: unknown): boolean {
   return error instanceof Error && error.message === "Active trip not found";
 }
@@ -927,10 +933,21 @@ async function startTrip(
     const departure = fromRestAnchor ? departurePoint(snapshot, point) : null;
     const startPoint = departure ?? point;
     const startAddress = await reverseGeocode(startPoint);
-    const trip = await api.post<{ id: string }>("/trips", {
-      startPoint,
-      startAddress,
-      ...(tripVehicleId(snapshot) ? { vehicleId: tripVehicleId(snapshot) } : {}),
+    const postTrip = (vehicleId: string | null) =>
+      api.post<{ id: string }>("/trips", {
+        startPoint,
+        startAddress,
+        ...(vehicleId ? { vehicleId } : {}),
+      });
+
+    // A vehicle linked to the car can since have been deleted, here or on
+    // the web. Retrying it would fail the start on every fix, so the trip
+    // goes on the default vehicle instead.
+    const vehicleId = tripVehicleId(snapshot);
+    const trip = await postTrip(vehicleId).catch((error: unknown) => {
+      if (!vehicleId || !isUnknownVehicleError(error)) throw error;
+      log(snapshot, "Kjøretøyet finnes ikke lenger. Turen registreres på standardkjøretøyet.", "warn");
+      return postTrip(null);
     });
 
     snapshot.pendingPoints = departure ? [point] : [];
@@ -1466,7 +1483,7 @@ async function handleCarBluetoothEvents(events: CarBluetoothEvent[]): Promise<vo
  */
 async function drainCarShortcutEvents(): Promise<void> {
   const changes: CarChange[] = consumeCarShortcutEvents().map((event) => ({
-    device: { address: SHORTCUT_CAR_ADDRESS, name: SHORTCUT_CAR_NAME, vehicleId: null },
+    device: { address: SHORTCUT_CAR_ADDRESS, name: SHORTCUT_CAR_NAME, vehicleId: event.vehicleId ?? null },
     connected: event.type === "connected",
     at: event.timestamp,
   }));
@@ -1482,6 +1499,11 @@ if (Platform.OS === "ios") {
 
 export function isCarShortcutSupported(): boolean {
   return isCarShortcutAvailable();
+}
+
+/** Keeps the vehicle choice in the Shortcuts action in step with the app. */
+export function syncCarShortcutVehicles(vehicles: ShortcutVehicle[]): void {
+  if (Platform.OS === "ios") setCarShortcutVehicles(vehicles);
 }
 
 TaskManager.defineTask(CAR_BLUETOOTH_TASK, async ({ data, error }) => {
