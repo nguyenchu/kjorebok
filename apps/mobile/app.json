@@ -16,7 +16,8 @@
         "UIBackgroundModes": [
           "location",
           "fetch"
-        ]
+        ],
+        "NSMotionUsageDescription": "Kjørebok bruker bevegelsessensoren til å se når du sitter i bil, slik at GPS bare er på når du faktisk kjører. Det sparer batteri."
       }
     },
     "android": {
@@ -33,6 +34,7 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.ACTIVITY_RECOGNITION",
         "android.permission.POST_NOTIFICATIONS"
       ],
       "blockedPermissions": [

@@ -77,6 +77,8 @@ export default function TrackingScreen() {
   const lastSyncAt = tracker?.lastSyncAt ?? null;
   const lastSpeedKmh = tracker?.lastSpeedKmh ?? null;
   const lastAccuracyMeters = tracker?.lastAccuracyMeters ?? null;
+  const motionPermission = tracker?.motionPermission ?? "unavailable";
+  const motionActivity = tracker?.motionActivity ?? null;
   const startCandidateCount = tracker?.startCandidateCount ?? 0;
   const startReason = tracker?.startReason ?? "Telefonen venter på tydelig bevegelse.";
   const recentEvents = tracker?.recentEvents ?? [];
@@ -213,6 +215,8 @@ export default function TrackingScreen() {
             <Text style={styles.metaRow}>Forgrunnslokasjon: {foregroundPermission}</Text>
             <Text style={styles.metaRow}>Bakgrunnslokasjon: {backgroundPermission}</Text>
             <Text style={styles.metaRow}>Notifikasjonstillatelse: {notificationPermission}</Text>
+            <Text style={styles.metaRow}>Bevegelsessensor: {motionPermission}</Text>
+            <Text style={styles.metaRow}>Siste aktivitet: {motionActivity ?? "Ikke registrert"}</Text>
             <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
             <Text style={styles.metaRow}>Siste fart: {lastSpeedKmh !== null ? `${lastSpeedKmh.toFixed(1)} km/t` : "Ikke registrert"}</Text>
             <Text style={styles.metaRow}>Siste GPS-nøyaktighet: {lastAccuracyMeters !== null ? `${Math.round(lastAccuracyMeters)} m` : "Ikke registrert"}</Text>
