@@ -17,6 +17,7 @@ import { api } from "@/lib/api";
 import {
   getCarDevices,
   isCarBluetoothSupported,
+  isCarShortcutSupported,
   listPairedDevicesForCar,
   setCarDevice,
   setSelectedVehicleId,
@@ -51,6 +52,7 @@ export default function VehiclesScreen() {
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [pairedDevices, setPairedDevices] = useState<PairedDevice[]>([]);
   const bluetoothSupported = isCarBluetoothSupported();
+  const shortcutSupported = isCarShortcutSupported();
 
   const load = useCallback(async () => {
     try {
@@ -194,6 +196,30 @@ export default function VehiclesScreen() {
             {bluetoothSupported &&
               " Kobler du et kjøretøy til bilens Bluetooth, starter sporingen når telefonen kobler seg til, og turen registreres på det kjøretøyet."}
           </Text>
+
+          {shortcutSupported && (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Start når iPhone kobler seg til bilen</Text>
+              <Text style={styles.emptyText}>
+                iPhone lar ikke apper se Bluetooth-tilkoblinger selv, men Snarveier kan si fra til Kjørebok:
+              </Text>
+              <Text style={styles.stepText}>
+                1. Åpne Snarveier, velg Automatisering og trykk +.{"\n"}
+                2. Velg Bluetooth, velg bilen og «Er tilkoblet». Velg «Kjør umiddelbart».{"\n"}
+                3. Legg til handlingen «Sitter i bilen» fra Kjørebok.{"\n"}
+                4. Lag gjerne en til med «Er frakoblet» og «Gått ut av bilen», så avsluttes turen raskere.
+              </Text>
+              <View style={styles.cardActions}>
+                <TouchableOpacity
+                  style={styles.cardAction}
+                  onPress={() => void Linking.openURL("shortcuts://")}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.cardActionText}>Åpne Snarveier</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
           {loading ? (
             <ActivityIndicator color="#2563eb" style={styles.loader} />
@@ -419,6 +445,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#e2e8f0",
   },
   deviceName: { fontSize: 15, color: "#0f172a" },
+  stepText: { fontSize: 14, color: "#334155", lineHeight: 22, marginTop: 8 },
   cardActionText: { fontSize: 14, fontWeight: "600", color: "#2563eb" },
   cardActionDanger: { color: "#dc2626" },
   formCard: {

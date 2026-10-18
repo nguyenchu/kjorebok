@@ -43,6 +43,11 @@ import {
   type CarBluetoothEvent,
   type PairedDevice,
 } from "../../modules/car-bluetooth";
+import {
+  addCarShortcutListener,
+  consumeCarShortcutEvents,
+  isCarShortcutAvailable,
+} from "../../modules/car-shortcut";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 const REST_GEOFENCE_TASK = "kjorebok-rest-geofence";
@@ -1013,6 +1018,12 @@ async function finishTrip(snapshot: Snapshot, tripId: string, endPoint: GpsPoint
     log(snapshot, "Tur fullført og sendt til server.");
     resetActiveTripState(snapshot);
     enterRest(snapshot, endPoint);
+    // A Shortcuts user may only automate the connect side. Without this, a
+    // stale "in the car" would keep GPS looking on every later wake.
+    if (snapshot.car?.connected && snapshot.car.address === SHORTCUT_CAR_ADDRESS) {
+      snapshot.car = { ...snapshot.car, connected: false, at: new Date(endPoint.timestamp).getTime() };
+      touch(snapshot, CAR_KEY);
+    }
 
     // result is null if server deleted the trip (too short)
     if (result && typeof result.distanceMeters === "number" && result.distanceMeters >= 50) {
@@ -1244,6 +1255,9 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   const { locations } = (data ?? {}) as { locations?: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
 
+  // Outside the batch's own serialize, which it would otherwise wait on.
+  if (Platform.OS === "ios") await drainCarShortcutEvents().catch(() => undefined);
+
   await serialize(async () => {
     await markTaskHeartbeat();
     const snapshot = await loadSnapshot();
@@ -1403,38 +1417,71 @@ async function readCarDevices(): Promise<CarDevice[]> {
   return Array.isArray(devices) ? devices.filter((device) => typeof device?.address === "string") : [];
 }
 
-async function handleCarBluetoothEvents(events: CarBluetoothEvent[]): Promise<void> {
-  if (events.length === 0) return;
-  const devices = await readCarDevices();
+/** Stands in for a device address when iOS Shortcuts reports the car. */
+const SHORTCUT_CAR_ADDRESS = "ios-shortcut";
+const SHORTCUT_CAR_NAME = "bilen (Snarveier)";
+
+type CarChange = { device: Omit<CarDevice, "vehicleId"> & { vehicleId: string | null }; connected: boolean; at: number };
+
+/** Shared by Android's Bluetooth watch and iOS Shortcuts automations. */
+async function handleCarChanges(changes: CarChange[]): Promise<void> {
+  if (changes.length === 0) return;
 
   await serialize(async () => {
     await markTaskHeartbeat();
     const snapshot = await loadSnapshot();
     try {
-      for (const event of [...events].sort((a, b) => a.timestamp - b.timestamp)) {
-        const device = devices.find((candidate) => candidate.address === event.address);
-        if (!device) continue;
-        if (snapshot.car && event.timestamp < snapshot.car.at) continue;
-
-        const connected = event.type === "connected";
-        snapshot.car = {
-          address: device.address,
-          vehicleId: device.vehicleId,
-          connected,
-          at: event.timestamp,
-        };
+      for (const { device, connected, at } of [...changes].sort((a, b) => a.at - b.at)) {
+        if (snapshot.car && at < snapshot.car.at) continue;
+        snapshot.car = { address: device.address, vehicleId: device.vehicleId, connected, at };
         touch(snapshot, CAR_KEY);
         log(snapshot, connected ? `Koblet til ${device.name}.` : `Koblet fra ${device.name}.`);
       }
 
       if (snapshot.state === "RESTING" && isConnectedToCar(snapshot.car)) {
-        wakeFromRest(snapshot, "Koblet til bilens Bluetooth. Starter GPS.");
+        wakeFromRest(snapshot, "Koblet til bilen. Starter GPS.");
       }
     } finally {
       await applyLocationMode(snapshot);
       await saveSnapshot(snapshot);
     }
   });
+}
+
+async function handleCarBluetoothEvents(events: CarBluetoothEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  const devices = await readCarDevices();
+  const changes: CarChange[] = [];
+  for (const event of events) {
+    const device = devices.find((candidate) => candidate.address === event.address);
+    if (device) changes.push({ device, connected: event.type === "connected", at: event.timestamp });
+  }
+  await handleCarChanges(changes);
+}
+
+/**
+ * Picks up what Shortcuts automations recorded. Runs when one fires while JS
+ * is alive, at startup (an automation can launch the app in the background),
+ * and with every location batch in case the notification was missed.
+ */
+async function drainCarShortcutEvents(): Promise<void> {
+  const changes: CarChange[] = consumeCarShortcutEvents().map((event) => ({
+    device: { address: SHORTCUT_CAR_ADDRESS, name: SHORTCUT_CAR_NAME, vehicleId: null },
+    connected: event.type === "connected",
+    at: event.timestamp,
+  }));
+  await handleCarChanges(changes);
+}
+
+if (Platform.OS === "ios") {
+  addCarShortcutListener(() => {
+    drainCarShortcutEvents().catch(() => undefined);
+  });
+  drainCarShortcutEvents().catch(() => undefined);
+}
+
+export function isCarShortcutSupported(): boolean {
+  return isCarShortcutAvailable();
 }
 
 TaskManager.defineTask(CAR_BLUETOOTH_TASK, async ({ data, error }) => {
@@ -1809,7 +1856,9 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     motionPermission,
     motionActivity: snapshot.motion?.activity ?? null,
     connectedCar: isConnectedToCar(snapshot.car)
-      ? (carDevices.find((device) => device.address === snapshot.car?.address)?.name ?? snapshot.car.address)
+      ? snapshot.car.address === SHORTCUT_CAR_ADDRESS
+        ? SHORTCUT_CAR_NAME
+        : (carDevices.find((device) => device.address === snapshot.car?.address)?.name ?? snapshot.car.address)
       : null,
     recentEvents: snapshot.logEntries,
   };

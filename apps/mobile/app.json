@@ -64,7 +64,8 @@
       "expo-router",
       "expo-asset",
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "./modules/car-shortcut/plugin/withCarShortcut"
     ],
     "extra": {
       "router": {},
