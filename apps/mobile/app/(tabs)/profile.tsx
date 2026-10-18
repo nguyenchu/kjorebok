@@ -5,6 +5,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/lib/auth";
 import { getTrackerState } from "@/lib/tripTracker";
 import { assessTrackerHealth, type TrackerHealth } from "@/lib/trackerHealth";
+import { useOnAppActive } from "@/lib/useOnAppActive";
 import { format } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -28,6 +29,13 @@ export default function ProfileScreen() {
       };
     }, [])
   );
+
+  // Returning from the system settings is not a focus change.
+  useOnAppActive(() => {
+    getTrackerState()
+      .then((tracker) => setHealth(assessTrackerHealth(tracker)))
+      .catch(() => {});
+  });
 
   const confirmDeleteAccount = () => {
     if (deleting) return;
