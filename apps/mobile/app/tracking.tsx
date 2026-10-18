@@ -9,6 +9,7 @@ import {
   type TrackerDiagnostics,
 } from "@/lib/tripTracker";
 import { assessTrackerHealth } from "@/lib/trackerHealth";
+import { useOnAppActive } from "@/lib/useOnAppActive";
 import { formatDistanceToNowStrict } from "date-fns";
 import { nb } from "date-fns/locale";
 
@@ -41,6 +42,10 @@ export default function TrackingScreen() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useOnAppActive(() => {
+    refresh().catch(() => {});
+  });
 
   const handleEnable = async () => {
     try {
