@@ -22,9 +22,21 @@ import * as TaskManager from "expo-task-manager";
 import { AppState, Platform } from "react-native";
 import { api, getToken } from "./api";
 import type { GpsPoint } from "@kjorebok/shared";
+import {
+  addMotionTransitionListener,
+  getMotionPermissionsAsync,
+  isMotionActivityAvailable,
+  queryRecentMotionAsync,
+  requestMotionPermissionsAsync,
+  startMotionTransitionsAsync,
+  stopMotionTransitionsAsync,
+  type MotionActivityKind,
+  type MotionTransitionEvent,
+} from "../../modules/motion-activity";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 const REST_GEOFENCE_TASK = "kjorebok-rest-geofence";
+const MOTION_TASK = "kjorebok-motion";
 
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 100;
@@ -47,6 +59,17 @@ const REST_ANCHOR_MAX_ACCURACY_METERS = 100;
  * likely stale than a real departure point.
  */
 const MAX_REST_ANCHOR_GAP_METERS = 3000;
+/**
+ * Motion detection saying "not in a car" shortens the decisions GPS would
+ * otherwise wait out: going back to rest after a walk, and confirming that a
+ * trip has ended. Without it (no permission, no sensor) the GPS-only timings
+ * above apply unchanged.
+ */
+const MOTION_EARLY_REST_MS = 90 * 1000;
+const MOTION_STOP_CONFIRM_MS = 60 * 1000;
+/** iOS history queries while GPS is on; Android pushes transitions instead. */
+const MOTION_QUERY_INTERVAL_MS = 30 * 1000;
+const MOTION_QUERY_WINDOW_MINUTES = 5;
 const MAX_PENDING_POINTS = 2000;
 const MAX_USABLE_ACCURACY_METERS = 40;
 const MAX_ROUTE_ACCURACY_METERS = 30;
@@ -95,6 +118,7 @@ const LOCATION_MODE_KEY = "tracker_location_mode";
 const REST_ANCHOR_KEY = "tracker_rest_anchor";
 const DETECT_SINCE_KEY = "tracker_detect_since";
 const LAST_FLUSH_AT_KEY = "tracker_last_flush_at";
+const MOTION_KEY = "tracker_motion";
 const MAX_START_FAIL_COUNT = 6;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
@@ -119,6 +143,7 @@ const SNAPSHOT_KEYS = [
   REST_ANCHOR_KEY,
   DETECT_SINCE_KEY,
   LAST_FLUSH_AT_KEY,
+  MOTION_KEY,
 ] as const;
 
 const DEFAULT_START_REASON = "Telefonen venter på tydelig bevegelse.";
@@ -139,6 +164,8 @@ export interface TrackerLogEntry {
   level: LogLevel;
   message: string;
 }
+
+type MotionPermissionStatus = "granted" | "denied" | "undetermined" | "unavailable";
 
 export interface TrackerDiagnostics {
   state: TrackerState;
@@ -165,10 +192,23 @@ export interface TrackerDiagnostics {
   startCandidateCount: number;
   startReason: string;
   selectedVehicleId: string | null;
+  motionPermission: MotionPermissionStatus;
+  motionActivity: string | null;
   recentEvents: TrackerLogEntry[];
 }
 
 type PositionSample = { lat: number; lng: number; timestamp: string };
+
+type MotionState = { activity: MotionActivityKind | "unknown"; since: number };
+
+function isNotDriving(motion: MotionState | null): motion is MotionState {
+  return motion !== null && motion.activity !== "automotive";
+}
+
+function isMotionState(value: unknown): value is MotionState {
+  const motion = value as MotionState | null;
+  return typeof motion?.activity === "string" && typeof motion?.since === "number";
+}
 
 /**
  * The whole tracker state, held in memory for the duration of one invocation.
@@ -198,6 +238,8 @@ interface Snapshot {
   /** When GPS started looking for a trip, so it can rest again if none comes. */
   detectSince: number | null;
   lastFlushAt: number | null;
+  /** Latest activity from motion detection; "unknown" right after leaving a car. */
+  motion: MotionState | null;
   dirty: Set<string>;
 }
 
@@ -250,6 +292,7 @@ async function loadSnapshot(): Promise<Snapshot> {
   const pendingPoints = parseJson<GpsPoint[]>(read(PENDING_POINTS_KEY), []);
   const logEntries = parseJson<TrackerLogEntry[]>(read(LOG_ENTRIES_KEY), []);
   const restAnchor = parseJson<GpsPoint | null>(read(REST_ANCHOR_KEY), null);
+  const motion = parseJson<MotionState | null>(read(MOTION_KEY), null);
 
   return {
     state: (read(STATE_KEY) ?? "IDLE") as TrackerState,
@@ -271,6 +314,7 @@ async function loadSnapshot(): Promise<Snapshot> {
     restAnchor: isGpsPoint(restAnchor) ? restAnchor : null,
     detectSince: parseNumber(read(DETECT_SINCE_KEY)),
     lastFlushAt: parseNumber(read(LAST_FLUSH_AT_KEY)),
+    motion: isMotionState(motion) ? motion : null,
     dirty: new Set(),
   };
 }
@@ -315,6 +359,8 @@ function serializeValue(snapshot: Snapshot, key: string): string | null {
       return snapshot.detectSince === null ? null : String(snapshot.detectSince);
     case LAST_FLUSH_AT_KEY:
       return snapshot.lastFlushAt === null ? null : String(snapshot.lastFlushAt);
+    case MOTION_KEY:
+      return snapshot.motion ? JSON.stringify(snapshot.motion) : null;
     default:
       return null;
   }
@@ -757,7 +803,16 @@ function maybeRest(snapshot: Snapshot, point: GpsPoint, nowMs: number): boolean 
   if (snapshot.detectSince === null) return false;
 
   const elapsed = nowMs - snapshot.detectSince;
-  if (elapsed < DETECT_TIMEOUT_MS) return false;
+  // Counted from waking, not from when that activity began: walking out of
+  // the zone started before it, but a stale "still" from hours ago must not
+  // cut a fresh look short.
+  const motion = snapshot.motion;
+  const motionSaysNotDriving =
+    isNotDriving(motion) &&
+    nowMs - Math.max(motion.since, snapshot.detectSince) >= MOTION_EARLY_REST_MS;
+  if (elapsed < DETECT_TIMEOUT_MS && !motionSaysNotDriving) return false;
+  // Motion detection already sees a car: GPS just has not caught up yet.
+  if (motion?.activity === "automotive" && elapsed < 3 * DETECT_TIMEOUT_MS) return false;
 
   const maxAccuracy =
     elapsed >= 3 * DETECT_TIMEOUT_MS ? Number.POSITIVE_INFINITY : REST_ANCHOR_MAX_ACCURACY_METERS;
@@ -980,6 +1035,8 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
         haversineMeters(anchor, point) - point.accuracy > REST_GEOFENCE_RADIUS_METERS
       ) {
         wakeFromRest(snapshot, "Posisjonen har flyttet seg fra hvilestedet. Starter GPS.");
+      } else if (startedDrivingSinceRest(snapshot)) {
+        wakeFromRest(snapshot, "Bevegelsessensoren ser kjøring. Starter GPS.");
       }
       break;
     }
@@ -1085,7 +1142,16 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
         return;
       }
 
-      if (snapshot.stopTime !== null && nowMs - snapshot.stopTime >= STOP_CONFIRM_MS) {
+      // Having left the car since the stop began is as good as most of the
+      // GPS wait.
+      const activity = snapshot.motion;
+      const confirmMs =
+        snapshot.stopTime !== null &&
+        isNotDriving(activity) &&
+        activity.since >= snapshot.stopTime - STOP_CONFIRM_MS
+          ? MOTION_STOP_CONFIRM_MS
+          : STOP_CONFIRM_MS;
+      if (snapshot.stopTime !== null && nowMs - snapshot.stopTime >= confirmMs) {
         // A failed end leaves the trip recoverable instead of bubbling out of
         // the batch and skipping the remaining locations.
         await finishTrip(snapshot, tripId, point).catch(() => undefined);
@@ -1132,6 +1198,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     await markTaskHeartbeat();
     const snapshot = await loadSnapshot();
     try {
+      await refreshMotionFromHistory(snapshot);
       for (const loc of sortLocations(locations)) {
         await handleLocation(snapshot, loc);
       }
@@ -1178,6 +1245,128 @@ TaskManager.defineTask(REST_GEOFENCE_TASK, async ({ data, error }) => {
   });
 });
 
+/** True when motion detection saw a car start after the tracker went to rest. */
+function startedDrivingSinceRest(snapshot: Snapshot): boolean {
+  const restedAt = snapshot.restAnchor ? new Date(snapshot.restAnchor.timestamp).getTime() : 0;
+  return snapshot.motion?.activity === "automotive" && snapshot.motion.since > restedAt;
+}
+
+/** Folds transitions into the stored activity, ignoring any older than it. */
+function applyMotionEvents(snapshot: Snapshot, events: MotionTransitionEvent[]): void {
+  for (const event of [...events].sort((a, b) => a.timestamp - b.timestamp)) {
+    if (snapshot.motion && event.timestamp < snapshot.motion.since) continue;
+
+    if (event.transition === "enter") {
+      snapshot.motion = { activity: event.activity, since: event.timestamp };
+    } else if (event.activity === "automotive" && snapshot.motion?.activity === "automotive") {
+      // Left the car; what comes next usually follows as its own event.
+      snapshot.motion = { activity: "unknown", since: event.timestamp };
+    } else {
+      continue;
+    }
+    touch(snapshot, MOTION_KEY);
+  }
+}
+
+async function handleMotionEvents(events: MotionTransitionEvent[]): Promise<void> {
+  if (events.length === 0) return;
+
+  await serialize(async () => {
+    await markTaskHeartbeat();
+    const snapshot = await loadSnapshot();
+    try {
+      applyMotionEvents(snapshot, events);
+      if (snapshot.state === "RESTING" && startedDrivingSinceRest(snapshot)) {
+        wakeFromRest(snapshot, "Bevegelsessensoren ser kjøring. Starter GPS.");
+      }
+    } finally {
+      await applyLocationMode(snapshot);
+      await saveSnapshot(snapshot);
+    }
+  });
+}
+
+let lastMotionQueryAt = 0;
+
+/**
+ * iOS cannot wake the app on an activity change, but the motion coprocessor
+ * keeps a history, so whenever a location batch arrives the recent part of it
+ * is folded in. Skipped while recording, where nothing reads it until a stop.
+ */
+async function refreshMotionFromHistory(snapshot: Snapshot): Promise<void> {
+  if (Platform.OS !== "ios" || snapshot.state === "RECORDING") return;
+
+  const now = Date.now();
+  if (now - lastMotionQueryAt < MOTION_QUERY_INTERVAL_MS) return;
+  lastMotionQueryAt = now;
+
+  const samples = await queryRecentMotionAsync(MOTION_QUERY_WINDOW_MINUTES).catch(() => []);
+  const latest = samples
+    .filter((sample) => sample.confidence !== "low")
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .pop();
+  if (!latest) return;
+
+  applyMotionEvents(snapshot, [
+    { activity: latest.activity, transition: "enter", timestamp: latest.timestamp },
+  ]);
+}
+
+TaskManager.defineTask(MOTION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error("[TripTracker]", error);
+    return;
+  }
+  const { events } = (data ?? {}) as { events?: MotionTransitionEvent[] };
+  await handleMotionEvents(events ?? []);
+});
+
+// Android delivers through the task above; iOS only while the app is alive.
+if (Platform.OS === "ios") {
+  addMotionTransitionListener((events) => {
+    handleMotionEvents(events).catch(() => undefined);
+  });
+}
+
+/**
+ * Asks once. A refusal is not an error: trips are still found, just with the
+ * slower GPS-only timings.
+ */
+async function ensureMotionPermission(snapshot: Snapshot): Promise<boolean> {
+  if (!isMotionActivityAvailable()) return false;
+  try {
+    const current = await getMotionPermissionsAsync();
+    if (current.granted || current.status !== "undetermined") return current.granted;
+
+    const requested = await requestMotionPermissionsAsync();
+    if (!requested.granted) {
+      log(snapshot, "Bevegelsessensor er ikke tillatt. Turer oppdages bare med GPS.", "warn");
+    }
+    return requested.granted;
+  } catch {
+    return false;
+  }
+}
+
+async function startMotionDetection(snapshot: Snapshot): Promise<void> {
+  if (!isMotionActivityAvailable()) return;
+  try {
+    const permission = await getMotionPermissionsAsync();
+    if (!permission.granted) return;
+    await startMotionTransitionsAsync(MOTION_TASK);
+  } catch (error) {
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    log(snapshot, `Kunne ikke starte bevegelsessensor${message}`, "warn");
+  }
+}
+
+async function getMotionPermissionStatus(): Promise<MotionPermissionStatus> {
+  if (!isMotionActivityAvailable()) return "unavailable";
+  return getMotionPermissionsAsync()
+    .then((result) => result.status)
+    .catch(() => "unavailable" as const);
+}
+
 export async function requestPermissions(): Promise<boolean> {
   const { status: notifStatus } = await Notifications.getPermissionsAsync();
   if (notifStatus !== "granted") {
@@ -1206,6 +1395,7 @@ export async function requestPermissions(): Promise<boolean> {
     } else {
       setStartReason(snapshot, "Tillatelser er klare. Telefonen kan starte tur automatisk.");
       log(snapshot, "Bakgrunnslokasjon er klar.");
+      await ensureMotionPermission(snapshot);
     }
 
     return bg.status === "granted";
@@ -1254,6 +1444,7 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
       if (snapshot.state !== "RESTING") {
         setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
       }
+      await startMotionDetection(snapshot);
 
       if (snapshot.activeTripId) {
         await flushWithRecovery(snapshot, snapshot.activeTripId, "Kunne ikke sende ventende punkter ved oppstart");
@@ -1376,6 +1567,7 @@ export async function stopTracking(): Promise<void> {
       await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     }
     await stopRestGeofence();
+    await stopMotionTransitionsAsync(MOTION_TASK).catch(() => undefined);
 
     const snapshot = await loadSnapshot();
     resetActiveTripState(snapshot);
@@ -1412,6 +1604,7 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     providerStatus,
     lastTaskAt,
     token,
+    motionPermission,
   ] = await Promise.all([
     loadSnapshot(),
     Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false),
@@ -1438,6 +1631,7 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     Location.getProviderStatusAsync().catch(() => null),
     AsyncStorage.getItem(LAST_TASK_AT_KEY),
     getToken(),
+    getMotionPermissionStatus(),
   ]);
 
   return {
@@ -1461,6 +1655,8 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     startCandidateCount: snapshot.startCandidateCount,
     startReason: snapshot.startReason,
     selectedVehicleId: snapshot.selectedVehicleId,
+    motionPermission,
+    motionActivity: snapshot.motion?.activity ?? null,
     recentEvents: snapshot.logEntries,
   };
 }
