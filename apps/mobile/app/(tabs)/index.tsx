@@ -12,6 +12,7 @@ import { router, useFocusEffect } from "expo-router";
 import { api } from "@/lib/api";
 import { getTrackerState } from "@/lib/tripTracker";
 import { assessTrackerHealth, type TrackerHealth } from "@/lib/trackerHealth";
+import { useOnAppActive } from "@/lib/useOnAppActive";
 import type { TripMode, TripPurpose, TripSummary } from "@kjorebok/shared";
 import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek, subDays } from "date-fns";
 import { nb } from "date-fns/locale";
@@ -291,6 +292,13 @@ export default function TripsScreen() {
       };
     }, [])
   );
+
+  // Returning from the system settings is not a focus change.
+  useOnAppActive(() => {
+    getTrackerState()
+      .then((tracker) => setHealth(assessTrackerHealth(tracker)))
+      .catch(() => {});
+  });
 
   const handleDelete = useCallback(async (id: string) => {
     try {
