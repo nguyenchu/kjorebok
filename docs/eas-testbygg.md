@@ -1,8 +1,8 @@
 # Testbygg med EAS for batterisparing og turstart
 
-Denne instruksen gjelder PR-ene #10–#13 (hvile med geofence, bevegelsessensor, Bluetooth-turstart og iOS-snarveien). De har native-kode som CI ikke bygger, så det første ekte testsignalet er et EAS-bygg.
+Denne instruksen gjelder batterisparingen og turstarten fra PR #10–#13 (hvile med geofence, bevegelsessensor, Bluetooth-turstart og iOS-snarveien). Alt ligger i `main`. Delene har native-kode som CI ikke bygger, så det første ekte testsignalet er et EAS-bygg.
 
-Bygg fra branchen øverst i stabelen, `feat/ios-car-shortcut`. Den inneholder alle fire.
+Bygg fra `main`.
 
 ## Forutsetninger
 
@@ -18,7 +18,8 @@ Fra repo-roten:
 
 ```bash
 git fetch origin
-git checkout feat/ios-car-shortcut
+git checkout main
+git pull
 corepack pnpm install
 cd apps/mobile
 npx tsc --noEmit
@@ -55,9 +56,9 @@ corepack pnpm build:ios:preview
 - Android: åpne steget «Run gradlew» i EAS-loggen.
 - iOS: åpne steget «Run fastlane» i EAS-loggen, og se etter den første linjen med `error:`.
 
-Kopier feilmeldingen med filnavn og linjenummer. Filstien viser hvilken modul og PR feilen hører til:
+Kopier feilmeldingen med filnavn og linjenummer. Filstien viser hvilken modul feilen hører til, og hvilken PR modulen kom fra:
 
-| Filsti inneholder | PR |
+| Filsti inneholder | Kom fra |
 | --- | --- |
 | `modules/motion-activity` | #11 |
 | `modules/car-bluetooth` | #12 |
@@ -114,4 +115,4 @@ adb logcat -s ReactNativeJS TaskService MotionTransitionConsumer
 
 iOS: åpne Console.app på en Mac med telefonen tilkoblet, og filtrer på «Kjørebok».
 
-Send med det som står i «Siste hendelser» og loggen når noe ikke oppfører seg som forventet. Kryss av sjekklistene i PR-ene etter hvert som testene går gjennom.
+Send med det som står i «Siste hendelser» og loggen når noe ikke oppfører seg som forventet. Sjekklistene i PR #10–#13 viser hva hver del skal klare, hvis du vil krysse av underveis.
