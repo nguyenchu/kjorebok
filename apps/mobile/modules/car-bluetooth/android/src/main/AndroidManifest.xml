@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+  <!-- Android 12+: needed to list paired devices and to receive connection broadcasts. -->
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+  <application>
+    <!--
+      Exported because the connection broadcasts come from the Bluetooth
+      process, not the system; both actions are protected, so only it can
+      send them. They are exempt from Android 8's implicit-broadcast limits,
+      so this runs even when the app is not.
+    -->
+    <receiver
+      android:name="expo.modules.carbluetooth.CarBluetoothReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+        <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

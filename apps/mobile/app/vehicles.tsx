@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -13,7 +14,15 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { api } from "@/lib/api";
-import { setSelectedVehicleId } from "@/lib/tripTracker";
+import {
+  getCarDevices,
+  isCarBluetoothSupported,
+  listPairedDevicesForCar,
+  setCarDevice,
+  setSelectedVehicleId,
+  type CarDevice,
+  type PairedDevice,
+} from "@/lib/tripTracker";
 import type { Vehicle, VehicleType } from "@kjorebok/shared";
 
 const TYPE_LABELS: Record<VehicleType, string> = {
@@ -38,11 +47,16 @@ export default function VehiclesScreen() {
   const [label, setLabel] = useState("");
   const [registration, setRegistration] = useState("");
   const [type, setType] = useState<VehicleType>("PRIVATE");
+  const [carDevices, setCarDevices] = useState<CarDevice[]>([]);
+  const [pickingFor, setPickingFor] = useState<string | null>(null);
+  const [pairedDevices, setPairedDevices] = useState<PairedDevice[]>([]);
+  const bluetoothSupported = isCarBluetoothSupported();
 
   const load = useCallback(async () => {
     try {
       const result = await api.get<Vehicle[]>("/vehicles");
       setVehicles(result);
+      setCarDevices(await getCarDevices());
       const fallback = result.find((vehicle) => vehicle.isDefault) ?? result[0] ?? null;
       await setSelectedVehicleId(fallback?.id ?? null);
     } catch (error) {
@@ -103,6 +117,34 @@ export default function VehiclesScreen() {
     }
   };
 
+  const handleLinkBluetooth = async (vehicle: Vehicle) => {
+    const devices = await listPairedDevicesForCar();
+    if (!devices) {
+      Alert.alert(
+        "Mangler tilgang",
+        "Gi Kjørebok tilgang til enheter i nærheten, så kan appen se når telefonen kobler seg til bilen.",
+        [
+          { text: "Avbryt", style: "cancel" },
+          { text: "Åpne innstillinger", onPress: () => void Linking.openSettings() },
+        ]
+      );
+      return;
+    }
+    setPairedDevices(devices);
+    setPickingFor(vehicle.id);
+  };
+
+  const handlePickDevice = async (vehicle: Vehicle, device: PairedDevice) => {
+    setPickingFor(null);
+    await setCarDevice(vehicle.id, device);
+    setCarDevices(await getCarDevices());
+  };
+
+  const handleUnlinkBluetooth = async (vehicle: Vehicle) => {
+    await setCarDevice(vehicle.id, null);
+    setCarDevices(await getCarDevices());
+  };
+
   const handleDelete = (vehicle: Vehicle) => {
     Alert.alert(
       "Slett kjøretøy",
@@ -116,6 +158,7 @@ export default function VehiclesScreen() {
             void (async () => {
               try {
                 await api.delete(`/vehicles/${vehicle.id}`);
+                await setCarDevice(vehicle.id, null);
                 await load();
               } catch (error) {
                 Alert.alert("Kunne ikke slette", error instanceof Error ? error.message : "Prøv igjen senere.");
@@ -148,6 +191,8 @@ export default function VehiclesScreen() {
           <Text style={styles.intro}>
             Nye turer registreres automatisk på standardkjøretøyet. Du kan endre kjøretøy på en enkelt tur
             i etterkant.
+            {bluetoothSupported &&
+              " Kobler du et kjøretøy til bilens Bluetooth, starter sporingen når telefonen kobler seg til, og turen registreres på det kjøretøyet."}
           </Text>
 
           {loading ? (
@@ -160,42 +205,89 @@ export default function VehiclesScreen() {
               </Text>
             </View>
           ) : (
-            vehicles.map((vehicle) => (
-              <View key={vehicle.id} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardTitleGroup}>
-                    <Text style={styles.cardTitle}>{vehicle.label}</Text>
-                    <Text style={styles.cardMeta}>
-                      {vehicle.registration} · {TYPE_LABELS[vehicle.type]}
-                    </Text>
+            vehicles.map((vehicle) => {
+              const carDevice = carDevices.find((device) => device.vehicleId === vehicle.id);
+              return (
+                <View key={vehicle.id} style={styles.card}>
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardTitleGroup}>
+                      <Text style={styles.cardTitle}>{vehicle.label}</Text>
+                      <Text style={styles.cardMeta}>
+                        {vehicle.registration} · {TYPE_LABELS[vehicle.type]}
+                      </Text>
+                      {carDevice && <Text style={styles.cardMeta}>Bluetooth: {carDevice.name}</Text>}
+                    </View>
+                    {vehicle.isDefault && (
+                      <View style={styles.badge}>
+                        <Text style={styles.badgeText}>Standard</Text>
+                      </View>
+                    )}
                   </View>
-                  {vehicle.isDefault && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>Standard</Text>
+
+                  <View style={styles.cardActions}>
+                    {!vehicle.isDefault && (
+                      <TouchableOpacity
+                        style={styles.cardAction}
+                        onPress={() => void handleSetDefault(vehicle)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.cardActionText}>Sett som standard</Text>
+                      </TouchableOpacity>
+                    )}
+                    {bluetoothSupported && (
+                      <TouchableOpacity
+                        style={styles.cardAction}
+                        onPress={() =>
+                          void (carDevice ? handleUnlinkBluetooth(vehicle) : handleLinkBluetooth(vehicle))
+                        }
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.cardActionText}>
+                          {carDevice ? "Fjern Bluetooth" : "Koble til Bluetooth"}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={styles.cardAction}
+                      onPress={() => handleDelete(vehicle)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.cardActionText, styles.cardActionDanger]}>Slett</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {pickingFor === vehicle.id && (
+                    <View style={styles.devicePicker}>
+                      <Text style={styles.fieldLabel}>Velg bilens Bluetooth-enhet</Text>
+                      {pairedDevices.length === 0 ? (
+                        <Text style={styles.emptyText}>
+                          Fant ingen sammenkoblede enheter. Koble telefonen til bilen i Bluetooth-innstillingene
+                          først.
+                        </Text>
+                      ) : (
+                        pairedDevices.map((device) => (
+                          <TouchableOpacity
+                            key={device.address}
+                            style={styles.deviceRow}
+                            onPress={() => void handlePickDevice(vehicle, device)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.deviceName}>{device.name}</Text>
+                          </TouchableOpacity>
+                        ))
+                      )}
+                      <TouchableOpacity
+                        style={styles.linkButton}
+                        onPress={() => setPickingFor(null)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.linkButtonText}>Avbryt</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>
-
-                <View style={styles.cardActions}>
-                  {!vehicle.isDefault && (
-                    <TouchableOpacity
-                      style={styles.cardAction}
-                      onPress={() => void handleSetDefault(vehicle)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.cardActionText}>Sett som standard</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    style={styles.cardAction}
-                    onPress={() => handleDelete(vehicle)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.cardActionText, styles.cardActionDanger]}>Slett</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
+                );
+            })
           )}
 
           {showForm ? (
@@ -308,12 +400,25 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 11, fontWeight: "700", color: "#1d4ed8" },
   cardActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     marginTop: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#e2e8f0",
     paddingTop: 12,
   },
-  cardAction: { marginRight: 20 },
+  cardAction: { marginRight: 20, marginBottom: 4 },
+  devicePicker: {
+    marginTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#e2e8f0",
+    paddingTop: 12,
+  },
+  deviceRow: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e2e8f0",
+  },
+  deviceName: { fontSize: 15, color: "#0f172a" },
   cardActionText: { fontSize: 14, fontWeight: "600", color: "#2563eb" },
   cardActionDanger: { color: "#dc2626" },
   formCard: {

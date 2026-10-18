@@ -33,10 +33,21 @@ import {
   type MotionActivityKind,
   type MotionTransitionEvent,
 } from "../../modules/motion-activity";
+import {
+  getCarBluetoothPermissionsAsync,
+  getPairedDevicesAsync,
+  isCarBluetoothAvailable,
+  requestCarBluetoothPermissionsAsync,
+  startWatchingCarBluetoothAsync,
+  stopWatchingCarBluetoothAsync,
+  type CarBluetoothEvent,
+  type PairedDevice,
+} from "../../modules/car-bluetooth";
 
 export const BACKGROUND_LOCATION_TASK = "kjorebok-background-location";
 const REST_GEOFENCE_TASK = "kjorebok-rest-geofence";
 const MOTION_TASK = "kjorebok-motion";
+const CAR_BLUETOOTH_TASK = "kjorebok-car-bluetooth";
 
 const STOP_CONFIRM_MS = 3 * 60 * 1000;
 const SYNC_BATCH_SIZE = 100;
@@ -119,6 +130,9 @@ const REST_ANCHOR_KEY = "tracker_rest_anchor";
 const DETECT_SINCE_KEY = "tracker_detect_since";
 const LAST_FLUSH_AT_KEY = "tracker_last_flush_at";
 const MOTION_KEY = "tracker_motion";
+const CAR_KEY = "tracker_car";
+/** Bluetooth devices linked to vehicles. Per phone, so kept off the server. */
+const CAR_DEVICES_KEY = "tracker_car_devices";
 const MAX_START_FAIL_COUNT = 6;
 const STALE_TRIP_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LOG_ENTRIES = 20;
@@ -144,6 +158,7 @@ const SNAPSHOT_KEYS = [
   DETECT_SINCE_KEY,
   LAST_FLUSH_AT_KEY,
   MOTION_KEY,
+  CAR_KEY,
 ] as const;
 
 const DEFAULT_START_REASON = "Telefonen venter på tydelig bevegelse.";
@@ -194,12 +209,33 @@ export interface TrackerDiagnostics {
   selectedVehicleId: string | null;
   motionPermission: MotionPermissionStatus;
   motionActivity: string | null;
+  /** Name of the linked car device currently connected, if any. */
+  connectedCar: string | null;
   recentEvents: TrackerLogEntry[];
 }
 
 type PositionSample = { lat: number; lng: number; timestamp: string };
 
 type MotionState = { activity: MotionActivityKind | "unknown"; since: number };
+
+type CarState = { address: string; vehicleId: string | null; connected: boolean; at: number };
+
+export type { PairedDevice };
+
+export interface CarDevice {
+  address: string;
+  name: string;
+  vehicleId: string;
+}
+
+function isCarState(value: unknown): value is CarState {
+  const car = value as CarState | null;
+  return typeof car?.address === "string" && typeof car?.connected === "boolean" && typeof car?.at === "number";
+}
+
+function isConnectedToCar(car: CarState | null): car is CarState {
+  return car !== null && car.connected;
+}
 
 function isNotDriving(motion: MotionState | null): motion is MotionState {
   return motion !== null && motion.activity !== "automotive";
@@ -240,6 +276,8 @@ interface Snapshot {
   lastFlushAt: number | null;
   /** Latest activity from motion detection; "unknown" right after leaving a car. */
   motion: MotionState | null;
+  /** Last connection change of a linked car's Bluetooth. */
+  car: CarState | null;
   dirty: Set<string>;
 }
 
@@ -293,6 +331,7 @@ async function loadSnapshot(): Promise<Snapshot> {
   const logEntries = parseJson<TrackerLogEntry[]>(read(LOG_ENTRIES_KEY), []);
   const restAnchor = parseJson<GpsPoint | null>(read(REST_ANCHOR_KEY), null);
   const motion = parseJson<MotionState | null>(read(MOTION_KEY), null);
+  const car = parseJson<CarState | null>(read(CAR_KEY), null);
 
   return {
     state: (read(STATE_KEY) ?? "IDLE") as TrackerState,
@@ -315,6 +354,7 @@ async function loadSnapshot(): Promise<Snapshot> {
     detectSince: parseNumber(read(DETECT_SINCE_KEY)),
     lastFlushAt: parseNumber(read(LAST_FLUSH_AT_KEY)),
     motion: isMotionState(motion) ? motion : null,
+    car: isCarState(car) ? car : null,
     dirty: new Set(),
   };
 }
@@ -359,6 +399,8 @@ function serializeValue(snapshot: Snapshot, key: string): string | null {
       return snapshot.detectSince === null ? null : String(snapshot.detectSince);
     case LAST_FLUSH_AT_KEY:
       return snapshot.lastFlushAt === null ? null : String(snapshot.lastFlushAt);
+    case CAR_KEY:
+      return snapshot.car ? JSON.stringify(snapshot.car) : null;
     case MOTION_KEY:
       return snapshot.motion ? JSON.stringify(snapshot.motion) : null;
     default:
@@ -803,6 +845,8 @@ function maybeRest(snapshot: Snapshot, point: GpsPoint, nowMs: number): boolean 
   if (snapshot.detectSince === null) return false;
 
   const elapsed = nowMs - snapshot.detectSince;
+  // Sitting in a linked car outweighs anything motion detection says.
+  if (isConnectedToCar(snapshot.car) && elapsed < 3 * DETECT_TIMEOUT_MS) return false;
   // Counted from waking, not from when that activity began: walking out of
   // the zone started before it, but a stale "still" from hours ago must not
   // cut a fresh look short.
@@ -863,6 +907,12 @@ function departurePoint(snapshot: Snapshot, point: GpsPoint): GpsPoint | null {
   };
 }
 
+/** The connected car's vehicle wins over the default one for this trip. */
+function tripVehicleId(snapshot: Snapshot): string | null {
+  const car = snapshot.car;
+  return (isConnectedToCar(car) ? car.vehicleId : null) ?? snapshot.selectedVehicleId;
+}
+
 async function startTrip(
   snapshot: Snapshot,
   point: GpsPoint,
@@ -875,7 +925,7 @@ async function startTrip(
     const trip = await api.post<{ id: string }>("/trips", {
       startPoint,
       startAddress,
-      ...(snapshot.selectedVehicleId ? { vehicleId: snapshot.selectedVehicleId } : {}),
+      ...(tripVehicleId(snapshot) ? { vehicleId: tripVehicleId(snapshot) } : {}),
     });
 
     snapshot.pendingPoints = departure ? [point] : [];
@@ -1145,12 +1195,12 @@ async function handleLocation(snapshot: Snapshot, loc: Location.LocationObject):
       // Having left the car since the stop began is as good as most of the
       // GPS wait.
       const activity = snapshot.motion;
-      const confirmMs =
+      const car = snapshot.car;
+      const leftCar =
         snapshot.stopTime !== null &&
-        isNotDriving(activity) &&
-        activity.since >= snapshot.stopTime - STOP_CONFIRM_MS
-          ? MOTION_STOP_CONFIRM_MS
-          : STOP_CONFIRM_MS;
+        ((isNotDriving(activity) && activity.since >= snapshot.stopTime - STOP_CONFIRM_MS) ||
+          (car !== null && !car.connected && car.at >= snapshot.stopTime - STOP_CONFIRM_MS));
+      const confirmMs = leftCar ? MOTION_STOP_CONFIRM_MS : STOP_CONFIRM_MS;
       if (snapshot.stopTime !== null && nowMs - snapshot.stopTime >= confirmMs) {
         // A failed end leaves the trip recoverable instead of bubbling out of
         // the batch and skipping the remaining locations.
@@ -1348,6 +1398,103 @@ async function ensureMotionPermission(snapshot: Snapshot): Promise<boolean> {
   }
 }
 
+async function readCarDevices(): Promise<CarDevice[]> {
+  const devices = parseJson<CarDevice[]>(await AsyncStorage.getItem(CAR_DEVICES_KEY), []);
+  return Array.isArray(devices) ? devices.filter((device) => typeof device?.address === "string") : [];
+}
+
+async function handleCarBluetoothEvents(events: CarBluetoothEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  const devices = await readCarDevices();
+
+  await serialize(async () => {
+    await markTaskHeartbeat();
+    const snapshot = await loadSnapshot();
+    try {
+      for (const event of [...events].sort((a, b) => a.timestamp - b.timestamp)) {
+        const device = devices.find((candidate) => candidate.address === event.address);
+        if (!device) continue;
+        if (snapshot.car && event.timestamp < snapshot.car.at) continue;
+
+        const connected = event.type === "connected";
+        snapshot.car = {
+          address: device.address,
+          vehicleId: device.vehicleId,
+          connected,
+          at: event.timestamp,
+        };
+        touch(snapshot, CAR_KEY);
+        log(snapshot, connected ? `Koblet til ${device.name}.` : `Koblet fra ${device.name}.`);
+      }
+
+      if (snapshot.state === "RESTING" && isConnectedToCar(snapshot.car)) {
+        wakeFromRest(snapshot, "Koblet til bilens Bluetooth. Starter GPS.");
+      }
+    } finally {
+      await applyLocationMode(snapshot);
+      await saveSnapshot(snapshot);
+    }
+  });
+}
+
+TaskManager.defineTask(CAR_BLUETOOTH_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error("[TripTracker]", error);
+    return;
+  }
+  const { events } = (data ?? {}) as { events?: CarBluetoothEvent[] };
+  await handleCarBluetoothEvents(events ?? []);
+});
+
+/** Watches exactly the linked devices, or nothing when none are linked. */
+async function syncCarBluetoothWatch(snapshot: Snapshot | null): Promise<void> {
+  if (!isCarBluetoothAvailable()) return;
+  try {
+    const devices = await readCarDevices();
+    const permission = await getCarBluetoothPermissionsAsync();
+    if (devices.length === 0 || !permission.granted) {
+      await stopWatchingCarBluetoothAsync(CAR_BLUETOOTH_TASK);
+      return;
+    }
+    await startWatchingCarBluetoothAsync(
+      CAR_BLUETOOTH_TASK,
+      devices.map((device) => device.address)
+    );
+  } catch (error) {
+    const message = error instanceof Error && error.message ? `: ${error.message}` : ".";
+    if (snapshot) log(snapshot, `Kunne ikke følge med på bilens Bluetooth${message}`, "warn");
+  }
+}
+
+export function isCarBluetoothSupported(): boolean {
+  return isCarBluetoothAvailable();
+}
+
+export async function getCarDevices(): Promise<CarDevice[]> {
+  return readCarDevices();
+}
+
+/**
+ * Lists paired devices to pick a car from, asking for the Bluetooth
+ * permission first. Null when it was refused.
+ */
+export async function listPairedDevicesForCar(): Promise<PairedDevice[] | null> {
+  const permission = await getCarBluetoothPermissionsAsync();
+  const granted = permission.granted || (await requestCarBluetoothPermissionsAsync()).granted;
+  if (!granted) return null;
+  return getPairedDevicesAsync();
+}
+
+/** Links a device to a vehicle, replacing what either was linked to; null unlinks the vehicle. */
+export async function setCarDevice(vehicleId: string, device: PairedDevice | null): Promise<void> {
+  const devices = (await readCarDevices()).filter(
+    (existing) => existing.vehicleId !== vehicleId && existing.address !== device?.address
+  );
+  if (device) devices.push({ address: device.address, name: device.name, vehicleId });
+  await AsyncStorage.setItem(CAR_DEVICES_KEY, JSON.stringify(devices));
+  await syncCarBluetoothWatch(null);
+}
+
 async function startMotionDetection(snapshot: Snapshot): Promise<void> {
   if (!isMotionActivityAvailable()) return;
   try {
@@ -1445,6 +1592,7 @@ export async function ensureTrackingConfigured(): Promise<boolean> {
         setStartReason(snapshot, "Bakgrunnssporing er aktiv. Telefonen følger med etter ny tur.");
       }
       await startMotionDetection(snapshot);
+      await syncCarBluetoothWatch(snapshot);
 
       if (snapshot.activeTripId) {
         await flushWithRecovery(snapshot, snapshot.activeTripId, "Kunne ikke sende ventende punkter ved oppstart");
@@ -1568,6 +1716,7 @@ export async function stopTracking(): Promise<void> {
     }
     await stopRestGeofence();
     await stopMotionTransitionsAsync(MOTION_TASK).catch(() => undefined);
+    await stopWatchingCarBluetoothAsync(CAR_BLUETOOTH_TASK).catch(() => undefined);
 
     const snapshot = await loadSnapshot();
     resetActiveTripState(snapshot);
@@ -1605,6 +1754,7 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     lastTaskAt,
     token,
     motionPermission,
+    carDevices,
   ] = await Promise.all([
     loadSnapshot(),
     Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false),
@@ -1632,6 +1782,7 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     AsyncStorage.getItem(LAST_TASK_AT_KEY),
     getToken(),
     getMotionPermissionStatus(),
+    readCarDevices(),
   ]);
 
   return {
@@ -1657,6 +1808,9 @@ export async function getTrackerState(): Promise<TrackerDiagnostics> {
     selectedVehicleId: snapshot.selectedVehicleId,
     motionPermission,
     motionActivity: snapshot.motion?.activity ?? null,
+    connectedCar: isConnectedToCar(snapshot.car)
+      ? (carDevices.find((device) => device.address === snapshot.car?.address)?.name ?? snapshot.car.address)
+      : null,
     recentEvents: snapshot.logEntries,
   };
 }
