@@ -21,7 +21,7 @@ import * as Notifications from "expo-notifications";
 import * as TaskManager from "expo-task-manager";
 import { AppState, Platform } from "react-native";
 import { api, getToken } from "./api";
-import type { GpsPoint } from "@kjorebok/shared";
+import type { GpsPoint, Vehicle } from "@kjorebok/shared";
 import {
   addMotionTransitionListener,
   getMotionPermissionsAsync,
@@ -1504,6 +1504,17 @@ export function isCarShortcutSupported(): boolean {
 /** Keeps the vehicle choice in the Shortcuts action in step with the app. */
 export function syncCarShortcutVehicles(vehicles: ShortcutVehicle[]): void {
   if (Platform.OS === "ios") setCarShortcutVehicles(vehicles);
+}
+
+/**
+ * Fetches the vehicles and syncs them to Shortcuts, so one added on the web
+ * is offered without first opening "Mine kjøretøy". Skipped where there is
+ * no Shortcuts action to feed.
+ */
+export async function refreshCarShortcutVehicles(): Promise<void> {
+  if (Platform.OS !== "ios" || !isCarShortcutAvailable()) return;
+  const vehicles = await api.get<Vehicle[]>("/vehicles");
+  syncCarShortcutVehicles(vehicles.map(({ id, label, registration }) => ({ id, label, registration })));
 }
 
 TaskManager.defineTask(CAR_BLUETOOTH_TASK, async ({ data, error }) => {

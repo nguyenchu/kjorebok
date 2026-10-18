@@ -6,7 +6,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { ensureTrackingConfigured, BACKGROUND_LOCATION_TASK } from "@/lib/tripTracker";
+import {
+  ensureTrackingConfigured,
+  refreshCarShortcutVehicles,
+  BACKGROUND_LOCATION_TASK,
+} from "@/lib/tripTracker";
 
 function NavigationGuard() {
   const { user, loading } = useAuth();
@@ -30,6 +34,10 @@ function TrackingBootstrap() {
 
   useEffect(() => {
     if (loading || !user) return;
+
+    // Independent of tracking setup, and best-effort: Shortcuts keeps the
+    // last list it was given.
+    refreshCarShortcutVehicles().catch(() => {});
 
     const handle = setTimeout(async () => {
       const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false);
