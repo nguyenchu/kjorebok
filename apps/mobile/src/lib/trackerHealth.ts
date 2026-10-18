@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import type { TrackerDiagnostics } from "./tripTracker";
 
 /** A background task that has not reported in this long has likely been killed. */
@@ -70,11 +71,22 @@ export function assessTrackerHealth(tracker: TrackerDiagnostics): TrackerHealth 
       };
     }
 
-    if (needsPermission) {
+    if (foregroundPermission !== "granted") {
       return {
         headline: "Gi tilgang til lokasjon",
-        summary: "Appen trenger lokasjonstilgang i bakgrunnen for å kunne oppdage turer automatisk.",
+        summary: "Appen trenger tilgang til posisjon for å kunne oppdage turer automatisk.",
         shortStatus: "Mangler lokasjonstilgang",
+      };
+    }
+
+    // The usual case when a user believes access is given: "while using the
+    // app" covers the foreground only, and automatic trips need the background.
+    if (backgroundPermission !== "granted") {
+      const choice = Platform.OS === "ios" ? "«Alltid»" : "«Tillat hele tiden»";
+      return {
+        headline: "Tillat posisjon hele tiden",
+        summary: `Appen har bare tilgang til posisjon mens den er åpen. Åpne innstillingene og velg ${choice} under Posisjon, så kan turer registreres automatisk.`,
+        shortStatus: "Mangler bakgrunnslokasjon",
       };
     }
 
