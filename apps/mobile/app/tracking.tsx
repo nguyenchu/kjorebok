@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, Linking } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, Linking, Platform } from "react-native";
 import { router, Stack } from "expo-router";
 import Constants from "expo-constants";
 import {
@@ -84,6 +84,7 @@ export default function TrackingScreen() {
   const lastAccuracyMeters = tracker?.lastAccuracyMeters ?? null;
   const motionPermission = tracker?.motionPermission ?? "unavailable";
   const motionActivity = tracker?.motionActivity ?? null;
+  const connectedCar = tracker?.connectedCar ?? null;
   const startCandidateCount = tracker?.startCandidateCount ?? 0;
   const startReason = tracker?.startReason ?? "Telefonen venter på tydelig bevegelse.";
   const recentEvents = tracker?.recentEvents ?? [];
@@ -222,6 +223,9 @@ export default function TrackingScreen() {
             <Text style={styles.metaRow}>Notifikasjonstillatelse: {notificationPermission}</Text>
             <Text style={styles.metaRow}>Bevegelsessensor: {motionPermission}</Text>
             <Text style={styles.metaRow}>Siste aktivitet: {motionActivity ?? "Ikke registrert"}</Text>
+            {Platform.OS === "android" && (
+              <Text style={styles.metaRow}>Bilens Bluetooth: {connectedCar ?? "Ikke tilkoblet"}</Text>
+            )}
             <Text style={styles.metaRow}>Ventende punkter: {pendingPoints}</Text>
             <Text style={styles.metaRow}>Siste fart: {lastSpeedKmh !== null ? `${lastSpeedKmh.toFixed(1)} km/t` : "Ikke registrert"}</Text>
             <Text style={styles.metaRow}>Siste GPS-nøyaktighet: {lastAccuracyMeters !== null ? `${Math.round(lastAccuracyMeters)} m` : "Ikke registrert"}</Text>
