@@ -103,6 +103,23 @@ function RootNavigator() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="login" />
+        <Stack.Screen
+          name="trip/[id]"
+          // A quick double tap on a trip pushed the same map twice, so the
+          // back button seemed to do nothing. One screen per trip id.
+          dangerouslySingular
+          options={{
+            // Set here rather than from the screen, so the header and its
+            // back button exist from the moment the screen is pushed.
+            headerShown: true,
+            title: "Tur",
+            headerBackTitle: "Tilbake",
+            headerStyle: { backgroundColor: "#eef6ff" },
+            headerShadowVisible: false,
+            headerTintColor: "#0f172a",
+            headerTitleStyle: { fontWeight: "700", fontSize: 18, color: "#0f172a" },
+          }}
+        />
       </Stack>
     </>
   );
