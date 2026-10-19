@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
@@ -66,17 +66,26 @@ function formatDuration(start: string, end: string | null) {
 function formatDayHeader(date: Date): string {
   if (isToday(date)) return "I dag";
   if (isYesterday(date)) return "I går";
-  return format(date, "EEEE d. MMMM", { locale: nb });
+  const label = format(date, "EEEE d. MMMM", { locale: nb });
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-function formatDayTabLabel(date: Date): string {
-  if (isToday(date)) return "I dag";
-  if (isYesterday(date)) return "I går";
-  return format(date, "EEEE", { locale: nb });
-}
-
-function formatDayTabMeta(date: Date): string {
-  return format(date, "d. MMM", { locale: nb });
+function weekArrowStyle(disabled: boolean): CSSProperties {
+  return {
+    width: "2.2rem",
+    height: "2.2rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(255,255,255,0.92)",
+    border: "1px solid var(--border)",
+    borderRadius: "999px",
+    fontSize: "1rem",
+    fontWeight: 700,
+    color: "var(--text)",
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.35 : 1,
+  };
 }
 
 function getTripAddress(trip: TripSummary): string | null {
@@ -145,11 +154,9 @@ function getMaxWeekOffset(trips: TripSummary[]): number {
   );
 }
 
-function formatWeekRange(days: DayLog[]): string {
-  if (days.length === 0) return "";
-
-  const firstDay = days[0].day;
-  const lastDay = days[days.length - 1].day;
+function formatWeekRange(weekStart: Date): string {
+  const firstDay = weekStart;
+  const lastDay = addDays(weekStart, 6);
   const sameMonth = format(firstDay, "yyyy-MM", { locale: nb }) === format(lastDay, "yyyy-MM", { locale: nb });
 
   if (sameMonth) {
@@ -163,7 +170,6 @@ export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
   const androidDownloadUrl = getAndroidDownloadUrl();
-  const dayTabsRef = useRef<HTMLDivElement>(null);
   const selectLastDayRef = useRef(false);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -255,13 +261,6 @@ export default function DashboardPage() {
       setSelectedWeekOffset(maxWeekOffset);
     }
   }, [maxWeekOffset, selectedWeekOffset]);
-
-  useEffect(() => {
-    const dayTabs = dayTabsRef.current;
-    if (dayTabs) {
-      dayTabs.scrollTo({ left: 0, behavior: "instant" });
-    }
-  }, [selectedWeekOffset]);
 
   useEffect(() => {
     if (dayLog.length === 0) return;
@@ -384,9 +383,10 @@ export default function DashboardPage() {
   const totalDistance = trips.reduce((sum, trip) => sum + trip.distanceMeters, 0);
   const latestTrip = visibleTrips[0] ?? null;
   const selectedDay = dayLog.find((day) => format(day.day, "yyyy-MM-dd") === selectedDayKey) ?? dayLog[0] ?? null;
-  const weekLabel = formatWeekRange(dayLog);
   const currentWeekStart = getWeekStart(0);
   const displayedWeekStart = getWeekStart(selectedWeekOffset);
+  const weekLabel = formatWeekRange(displayedWeekStart);
+  const weekDays = Array.from({ length: 7 }, (_, offset) => addDays(displayedWeekStart, offset));
   const previousMonthWeekOffset = Math.min(
     maxWeekOffset,
     Math.max(
@@ -668,7 +668,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "1rem", marginBottom: "0.75rem" }}>
         <div>
           <p style={{ color: "var(--text-soft)", fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.2rem" }}>
             Tidsrom
@@ -681,7 +681,7 @@ export default function DashboardPage() {
             onClick={() => setSelectedWeekOffset(previousMonthWeekOffset)}
             disabled={previousMonthWeekOffset === selectedWeekOffset}
             style={{
-              marginTop: "0.45rem",
+              marginTop: "0.3rem",
               padding: 0,
               background: "none",
               border: "none",
@@ -695,119 +695,102 @@ export default function DashboardPage() {
             Hopp til forrige måned
           </button>
         </div>
+        {dayLog.length > 0 && (
+          <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedWeekOffset((current) => Math.min(current + 1, maxWeekOffset))}
+              disabled={selectedWeekOffset >= maxWeekOffset}
+              style={weekArrowStyle(selectedWeekOffset >= maxWeekOffset)}
+              aria-label="Eldre uke"
+            >
+              ←
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
+              disabled={selectedWeekOffset === 0}
+              style={weekArrowStyle(selectedWeekOffset === 0)}
+              aria-label="Nyere uke"
+            >
+              →
+            </button>
+          </div>
+        )}
       </div>
 
       {dayLog.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
-          <button
-            type="button"
-            onClick={() => setSelectedWeekOffset((current) => Math.min(current + 1, maxWeekOffset))}
-            disabled={selectedWeekOffset >= maxWeekOffset}
-            style={{
-              flexShrink: 0,
-              width: "2.2rem",
-              height: "2.2rem",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "rgba(255,255,255,0.92)",
-              border: "1px solid var(--border)",
-              borderRadius: "999px",
-              fontSize: "1rem",
-              fontWeight: 700,
-              color: "var(--text)",
-              cursor: selectedWeekOffset >= maxWeekOffset ? "default" : "pointer",
-              opacity: selectedWeekOffset >= maxWeekOffset ? 0.3 : 1,
-            }}
-            aria-label="Eldre uke"
-          >
-            ←
-          </button>
-          <div ref={dayTabsRef} style={{ display: "flex", gap: "0.75rem", overflowX: "auto", padding: "0.1rem 0 0.6rem", flex: 1 }}>
-            {dayLog.map((day) => {
-              const selected = selectedDay ? isSameDay(day.day, selectedDay.day) : false;
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: "0.4rem", marginBottom: "1.25rem" }}>
+          {weekDays.map((day) => {
+            const log = dayLog.find((entry) => isSameDay(entry.day, day));
+            const selected = selectedDay ? isSameDay(day, selectedDay.day) : false;
+            const today = isToday(day);
+            const tripCount = log?.trips.length ?? 0;
 
-              return (
-                <button
-                  key={day.day.toISOString()}
-                  type="button"
-                  onClick={() => setSelectedDayKey(format(day.day, "yyyy-MM-dd"))}
+            return (
+              <button
+                key={day.toISOString()}
+                type="button"
+                onClick={() => setSelectedDayKey(format(day, "yyyy-MM-dd"))}
+                disabled={!log}
+                aria-pressed={selected}
+                aria-label={`${formatDayHeader(day)}, ${tripCount === 1 ? "1 tur" : `${tripCount} turer`}`}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "0.2rem",
+                  minWidth: 0,
+                  padding: "0.55rem 0.15rem 0.5rem",
+                  border: selected ? "1px solid var(--text)" : today ? "1px solid var(--primary)" : "1px solid var(--border)",
+                  borderRadius: "14px",
+                  background: selected ? "var(--text)" : "rgba(255,255,255,0.86)",
+                  color: selected ? "#f8fafc" : "var(--text)",
+                  cursor: log ? "pointer" : "default",
+                  opacity: log ? 1 : 0.4,
+                  boxShadow: selected ? "0 10px 22px rgba(15, 23, 42, 0.16)" : "none",
+                }}
+              >
+                <span
                   style={{
-                    position: "relative",
-                    flex: "0 0 auto",
-                    minWidth: "116px",
-                    textAlign: "left",
-                    border: selected ? "1px solid rgba(15, 23, 42, 0.96)" : "1px solid var(--border)",
-                    borderRadius: "18px",
-                    padding: "0.85rem 0.95rem",
-                    background: selected ? "var(--text)" : "rgba(255,255,255,0.86)",
-                    color: selected ? "#f8fafc" : "var(--text)",
-                    cursor: "pointer",
-                    boxShadow: selected ? "0 18px 36px rgba(15, 23, 42, 0.18)" : "0 12px 26px rgba(15, 23, 42, 0.05)",
+                    fontSize: "0.72rem",
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                    color: selected ? "#cbd5e1" : today ? "var(--primary)" : "var(--text-muted)",
                   }}
                 >
-                  <div style={{ fontSize: "0.98rem", fontWeight: 850, textTransform: "capitalize", marginBottom: "0.15rem" }}>
-                    {formatDayTabLabel(day.day)}
-                  </div>
-                  <div style={{ fontSize: "0.78rem", fontWeight: 700, color: selected ? "#cbd5e1" : "var(--text-muted)" }}>
-                    {formatDayTabMeta(day.day)}
-                  </div>
-                  {day.trips.length > 0 && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: "0.55rem",
-                        right: "0.55rem",
-                        minWidth: "1.35rem",
-                        height: "1.35rem",
-                        padding: "0 0.4rem",
-                        borderRadius: "999px",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: selected ? "#38bdf8" : "#e0f2fe",
-                        color: selected ? "#082f49" : "#0369a1",
-                        fontSize: "0.72rem",
-                        fontWeight: 850,
-                      }}
-                    >
-                      {day.trips.length}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
-            disabled={selectedWeekOffset === 0}
-            style={{
-              flexShrink: 0,
-              width: "2.2rem",
-              height: "2.2rem",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: selectedWeekOffset === 0 ? "rgba(15,23,42,0.08)" : "var(--text)",
-              border: "1px solid rgba(15, 23, 42, 0.12)",
-              borderRadius: "999px",
-              fontSize: "1rem",
-              fontWeight: 700,
-              color: selectedWeekOffset === 0 ? "var(--text-soft)" : "#fff",
-              cursor: selectedWeekOffset === 0 ? "default" : "pointer",
-              opacity: selectedWeekOffset === 0 ? 0.3 : 1,
-            }}
-            aria-label="Nyere uke"
-          >
-            →
-          </button>
+                  {format(day, "EEE", { locale: nb })}
+                </span>
+                <span style={{ fontSize: "1.15rem", fontWeight: 850, lineHeight: 1.1 }}>
+                  {format(day, "d")}
+                </span>
+                <span
+                  style={{
+                    minWidth: "1.3rem",
+                    height: "1.15rem",
+                    padding: "0 0.35rem",
+                    borderRadius: "999px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.7rem",
+                    fontWeight: 850,
+                    background: tripCount === 0 ? "transparent" : selected ? "#38bdf8" : "#e0f2fe",
+                    color: selected ? "#082f49" : "#0369a1",
+                  }}
+                >
+                  {tripCount > 0 ? tripCount : ""}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
       {selectedDay && (
         <section>
-          <h3 style={{ color: "var(--text-soft)", fontSize: "0.92rem", fontWeight: 800, marginBottom: "0.65rem", textTransform: "capitalize" }}>
+          <h3 style={{ color: "var(--text-soft)", fontSize: "0.92rem", fontWeight: 800, marginBottom: "0.65rem" }}>
             {formatDayHeader(selectedDay.day)}
           </h3>
           {selectedDay.trips.length === 0 ? (
