@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { View, Text, FlatList, StyleSheet, RefreshControl, ScrollView, TouchableOpacity, Alert } from "react-native";
+import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 // The Animated-based Swipeable, not the Reanimated one. ReanimatedSwipeable
 // renders without complaint here but never responds to a drag, even with
@@ -35,18 +35,8 @@ function formatDayHeader(date: Date): string {
   if (isToday(date)) return "I dag";
   if (isYesterday(date)) return "I går";
   if (isDayBeforeYesterday(date)) return "Forgårs";
-  return format(date, "EEEE d. MMMM", { locale: nb });
-}
-
-function formatDayTabLabel(date: Date): string {
-  if (isToday(date)) return "I dag";
-  if (isYesterday(date)) return "I går";
-  if (isDayBeforeYesterday(date)) return "Forgårs";
-  return format(date, "EEEE", { locale: nb });
-}
-
-function formatDayTabMeta(date: Date): string {
-  return format(date, "d. MMM", { locale: nb });
+  const label = format(date, "EEEE d. MMMM", { locale: nb });
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function getTripAddress(trip: TripSummary): string | null {
@@ -115,11 +105,9 @@ function getMaxWeekOffset(trips: TripSummary[]): number {
   );
 }
 
-function formatWindowRange(groups: DayGroup[]): string {
-  if (groups.length === 0) return "";
-
-  const firstDay = groups[0].day;
-  const lastDay = groups[groups.length - 1].day;
+function formatWeekRange(weekStart: Date): string {
+  const firstDay = weekStart;
+  const lastDay = addDays(weekStart, 6);
   const sameMonth = format(firstDay, "yyyy-MM", { locale: nb }) === format(lastDay, "yyyy-MM", { locale: nb });
 
   if (sameMonth) {
@@ -269,7 +257,6 @@ function EmptyDayItem({ lastKnownAddress }: { lastKnownAddress: string | null })
 
 export default function TripsScreen() {
   const tabBarHeight = useBottomTabBarHeight();
-  const dayTabsRef = useRef<ScrollView>(null);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -349,19 +336,15 @@ export default function TripsScreen() {
   const maxWeekOffset = getMaxWeekOffset(trips);
   const selectedGroup = grouped.find((group) => format(group.day, "yyyy-MM-dd") === selectedDayKey) ?? grouped[0] ?? null;
   const selectedTrips = selectedGroup?.trips ?? [];
-  const windowLabel = formatWindowRange(grouped);
+  const weekStart = getWeekStart(selectedWeekOffset);
+  const weekLabel = formatWeekRange(weekStart);
+  const weekDays = Array.from({ length: 7 }, (_, offset) => addDays(weekStart, offset));
 
   useEffect(() => {
     if (selectedWeekOffset > maxWeekOffset) {
       setSelectedWeekOffset(maxWeekOffset);
     }
   }, [maxWeekOffset, selectedWeekOffset]);
-
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      dayTabsRef.current?.scrollToEnd({ animated: false });
-    });
-  }, [selectedWeekOffset]);
 
   useEffect(() => {
     if (grouped.length === 0) return;
@@ -402,51 +385,70 @@ export default function TripsScreen() {
                 onPress={() => setSelectedWeekOffset((current) => Math.min(current + 1, maxWeekOffset))}
                 disabled={selectedWeekOffset >= maxWeekOffset}
                 activeOpacity={0.7}
+                accessibilityLabel="Eldre uke"
                 style={[styles.arrowButton, selectedWeekOffset >= maxWeekOffset && styles.arrowButtonDisabled]}
               >
                 <Text style={styles.arrowText}>←</Text>
               </TouchableOpacity>
-              <ScrollView
-                ref={dayTabsRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.dayTabs}
-              >
-              {grouped.map((group) => {
-                const isSelected = selectedGroup ? isSameDay(group.day, selectedGroup.day) : false;
-
-                return (
-                  <TouchableOpacity
-                    key={group.day.toISOString()}
-                    style={[styles.dayTab, isSelected && styles.dayTabSelected]}
-                    onPress={() => setSelectedDayKey(format(group.day, "yyyy-MM-dd"))}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={[styles.dayTabLabel, isSelected && styles.dayTabLabelSelected]}>
-                      {formatDayTabLabel(group.day)}
-                    </Text>
-                    <Text style={[styles.dayTabMeta, isSelected && styles.dayTabMetaSelected]}>
-                      {formatDayTabMeta(group.day)}
-                    </Text>
-                    {group.trips.length > 0 && (
-                      <View style={[styles.dayTabBadge, isSelected && styles.dayTabBadgeSelected]}>
-                        <Text style={[styles.dayTabBadgeText, isSelected && styles.dayTabBadgeTextSelected]}>
-                          {group.trips.length}
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-              </ScrollView>
+              <Text style={styles.weekLabel}>{weekLabel}</Text>
               <TouchableOpacity
                 onPress={() => setSelectedWeekOffset((current) => Math.max(current - 1, 0))}
                 disabled={selectedWeekOffset === 0}
                 activeOpacity={0.7}
+                accessibilityLabel="Nyere uke"
                 style={[styles.arrowButton, selectedWeekOffset === 0 && styles.arrowButtonDisabled]}
               >
                 <Text style={styles.arrowText}>→</Text>
               </TouchableOpacity>
+            </View>
+            <View style={styles.dayTabs}>
+              {weekDays.map((day) => {
+                const group = grouped.find((entry) => isSameDay(entry.day, day));
+                const isSelected = selectedGroup ? isSameDay(day, selectedGroup.day) : false;
+                const isCurrentDay = isToday(day);
+                const tripCount = group?.trips.length ?? 0;
+
+                return (
+                  <TouchableOpacity
+                    key={day.toISOString()}
+                    style={[
+                      styles.dayTab,
+                      isCurrentDay && styles.dayTabToday,
+                      isSelected && styles.dayTabSelected,
+                      !group && styles.dayTabDisabled,
+                    ]}
+                    onPress={() => setSelectedDayKey(format(day, "yyyy-MM-dd"))}
+                    disabled={!group}
+                    activeOpacity={0.85}
+                    accessibilityLabel={`${formatDayHeader(day)}, ${tripCount === 1 ? "1 tur" : `${tripCount} turer`}`}
+                    accessibilityState={{ selected: isSelected, disabled: !group }}
+                  >
+                    <Text
+                      style={[
+                        styles.dayTabWeekday,
+                        isCurrentDay && styles.dayTabWeekdayToday,
+                        isSelected && styles.dayTabWeekdaySelected,
+                      ]}
+                    >
+                      {format(day, "EEE", { locale: nb })}
+                    </Text>
+                    <Text style={[styles.dayTabDate, isSelected && styles.dayTabDateSelected]}>
+                      {format(day, "d")}
+                    </Text>
+                    <View
+                      style={[
+                        styles.dayTabBadge,
+                        tripCount === 0 && styles.dayTabBadgeEmpty,
+                        isSelected && tripCount > 0 && styles.dayTabBadgeSelected,
+                      ]}
+                    >
+                      <Text style={[styles.dayTabBadgeText, isSelected && styles.dayTabBadgeTextSelected]}>
+                        {tripCount > 0 ? tripCount : ""}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
             {selectedGroup && <Text style={styles.dayHeader}>{formatDayHeader(selectedGroup.day)}</Text>}
           </View>
@@ -524,62 +526,74 @@ const styles = StyleSheet.create({
   paginationRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: 12,
-    gap: 4,
+    gap: 8,
+  },
+  weekLabel: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0f172a",
   },
   arrowButton: {
-    padding: 10,
     borderRadius: 999,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
     alignItems: "center",
     justifyContent: "center",
     width: 40,
     height: 40,
   },
   arrowButtonDisabled: {
-    opacity: 0.3,
+    opacity: 0.35,
   },
   arrowText: {
     fontSize: 18,
     fontWeight: "700",
     color: "#0f172a",
   },
-  dayTabs: { gap: 10, paddingBottom: 4 },
+  dayTabs: { flexDirection: "row", gap: 6, marginBottom: 16 },
   dayTab: {
-    minWidth: 94,
+    flex: 1,
+    alignItems: "center",
+    gap: 2,
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: 14,
+    paddingTop: 8,
+    paddingBottom: 7,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    position: "relative",
   },
+  dayTabToday: { borderColor: "#1d4ed8" },
   dayTabSelected: {
     backgroundColor: "#0f172a",
     borderColor: "#0f172a",
   },
-  dayTabLabel: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#0f172a",
-    textTransform: "capitalize",
-    marginBottom: 2,
+  dayTabDisabled: { opacity: 0.4 },
+  dayTabWeekday: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
-  dayTabLabelSelected: { color: "#fff" },
-  dayTabMeta: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
-  dayTabMetaSelected: { color: "#cbd5e1" },
+  dayTabWeekdayToday: { color: "#1d4ed8" },
+  dayTabWeekdaySelected: { color: "#cbd5e1" },
+  dayTabDate: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+  dayTabDateSelected: { color: "#fff" },
   dayTabBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
     minWidth: 20,
-    height: 20,
-    borderRadius: 10,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: "#e0f2fe",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
   },
+  dayTabBadgeEmpty: { backgroundColor: "transparent" },
   dayTabBadgeSelected: { backgroundColor: "#38bdf8" },
   dayTabBadgeText: { fontSize: 11, fontWeight: "800", color: "#0369a1" },
   dayTabBadgeTextSelected: { color: "#082f49" },
@@ -587,7 +601,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: "#64748b",
-    textTransform: "capitalize",
     marginBottom: 12,
     marginLeft: 4,
   },
