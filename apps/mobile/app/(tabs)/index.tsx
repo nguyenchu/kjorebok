@@ -40,15 +40,15 @@ function formatDayHeader(date: Date): string {
 }
 
 function getTripAddress(trip: TripSummary): string | null {
-  return trip.endPlace?.label ?? trip.endAddress ?? trip.startPlace?.label ?? trip.startAddress ?? null;
+  return getTripEndLabel(trip) ?? trip.startPlace?.label ?? trip.startPoi ?? trip.startAddress ?? null;
 }
 
 function getTripStartLabel(trip: TripSummary): string {
-  return trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start";
+  return trip.startPlace?.label ?? trip.startPoi ?? trip.startAddress ?? "Ukjent start";
 }
 
 function getTripEndLabel(trip: TripSummary): string | null {
-  return trip.endPlace?.label ?? trip.endAddress ?? null;
+  return trip.endPlace?.label ?? trip.endPoi ?? trip.endAddress ?? null;
 }
 
 function getWeekStart(weekOffset: number): Date {
