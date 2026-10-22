@@ -324,7 +324,13 @@ export default function TripsScreen() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // On every focus, not just the first: a place named or a trip edited in the
+  // trip view has to show here when the user comes back.
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
