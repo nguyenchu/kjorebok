@@ -14,7 +14,7 @@ import { getTrackerState } from "@/lib/tripTracker";
 import { assessTrackerHealth, type TrackerHealth } from "@/lib/trackerHealth";
 import { useOnAppActive } from "@/lib/useOnAppActive";
 import type { TripMode, TripPurpose, TripSummary } from "@kjorebok/shared";
-import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek, subDays } from "date-fns";
+import { addDays, addWeeks, differenceInCalendarWeeks, differenceInMinutes, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek, subDays } from "date-fns";
 import { nb } from "date-fns/locale";
 
 type DayGroup = {
@@ -25,6 +25,13 @@ type DayGroup = {
 
 function formatDistance(meters: number) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+}
+
+/** "22 min" or "1 t 5 min" */
+function formatDuration(minutes: number) {
+  if (minutes < 60) return `${minutes} min`;
+  const rest = minutes % 60;
+  return rest === 0 ? `${Math.floor(minutes / 60)} t` : `${Math.floor(minutes / 60)} t ${rest} min`;
 }
 
 function isDayBeforeYesterday(date: Date): boolean {
@@ -139,6 +146,11 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
   const isActive = trip.status === "ACTIVE";
   const startTime = format(parseISO(trip.startedAt), "HH:mm", { locale: nb });
   const endTime = trip.endedAt ? format(parseISO(trip.endedAt), "HH:mm", { locale: nb }) : null;
+  // Under a minute still reads as a trip, not "0 min".
+  const durationMinutes = trip.endedAt
+    ? Math.max(1, differenceInMinutes(parseISO(trip.endedAt), parseISO(trip.startedAt)))
+    : null;
+  const endLabel = getTripEndLabel(trip) ?? (trip.endedAt ? "Ukjent slutt" : null);
   const mode: TripMode = trip.mode ?? "CAR";
   const swipeRef = useRef<Swipeable>(null);
 
@@ -165,7 +177,6 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
     <View style={styles.timelineItem}>
       <View style={styles.timelineLeft}>
         <Text style={styles.timelineTime}>{startTime}</Text>
-        {endTime && <Text style={styles.timelineTimeEnd}>{endTime}</Text>}
       </View>
       <View style={styles.timelineCenter}>
         <View style={[styles.timelineDot, isActive && styles.timelineDotActive]} />
@@ -196,6 +207,9 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
             <View style={styles.cardHeaderLeft}>
               <Text style={styles.modeIcon}>{MODE_ICONS[mode]}</Text>
               <Text style={styles.distance}>{formatDistance(trip.distanceMeters)}</Text>
+              {durationMinutes !== null && (
+                <Text style={styles.duration}>· {formatDuration(durationMinutes)}</Text>
+              )}
             </View>
             <View style={styles.cardHeaderRight}>
               <View style={[styles.purposeTag, trip.purpose === "WORK" && styles.purposeTagWork]}>
@@ -213,13 +227,14 @@ function TripTimelineItem({ trip, isLast, onDelete, onSetPurpose, onSetMode, onP
               )}
             </View>
           </View>
-          <Text style={styles.route} numberOfLines={2}>
-            {getTripStartLabel(trip)}
-          </Text>
-          {getTripEndLabel(trip) && (
-            <View style={styles.destinationRow}>
-              <Text style={styles.arrow}>→</Text>
-              <Text style={styles.route} numberOfLines={2}>{getTripEndLabel(trip)}</Text>
+          <View style={styles.placeRow}>
+            <Text style={styles.placeTime}>{startTime}</Text>
+            <Text style={styles.route} numberOfLines={2}>{getTripStartLabel(trip)}</Text>
+          </View>
+          {endLabel && (
+            <View style={[styles.placeRow, styles.placeRowEnd]}>
+              <Text style={styles.placeTime}>{endTime ?? ""}</Text>
+              <Text style={styles.route} numberOfLines={2}>{endLabel}</Text>
             </View>
           )}
         </TouchableOpacity>
@@ -617,12 +632,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#94a3b8",
   },
-  timelineTimeEnd: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: "#cbd5e1",
-    marginTop: 2,
-  },
   timelineCenter: {
     width: 24,
     alignItems: "center",
@@ -700,9 +709,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#2563eb",
   },
   activeBadgeText: { fontSize: 12, fontWeight: "600", color: "#2563eb" },
-  route: { fontSize: 14, color: "#475569", lineHeight: 20 },
-  destinationRow: { flexDirection: "row", alignItems: "flex-start", gap: 4, marginTop: 2 },
-  arrow: { fontSize: 14, color: "#94a3b8", marginTop: 1 },
+  duration: { fontSize: 15, fontWeight: "600", color: "#64748b" },
+  route: { flex: 1, fontSize: 14, color: "#475569", lineHeight: 20 },
+  placeRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  placeRowEnd: { marginTop: 2 },
+  // Fixed width and tabular digits keep the place names lined up.
+  placeTime: {
+    width: 40,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: "#64748b",
+    fontVariant: ["tabular-nums"],
+  },
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
