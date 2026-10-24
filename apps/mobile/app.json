@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kjørebok",
     "slug": "kjorebok",
-    "version": "1.0.58",
+    "version": "1.0.59",
     "orientation": "portrait",
     "scheme": "kjorebok",
     "icon": "./assets/app-icon.png",
@@ -27,7 +27,7 @@
         "foregroundImage": "./assets/android-launcher-icon.png",
         "backgroundColor": "#FFFFFF"
       },
-      "versionCode": 58,
+      "versionCode": 59,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION",
