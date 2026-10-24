@@ -105,9 +105,6 @@ function RootNavigator() {
         <Stack.Screen name="login" />
         <Stack.Screen
           name="trip/[id]"
-          // A quick double tap on a trip pushed the same map twice, so the
-          // back button seemed to do nothing. One screen per trip id.
-          dangerouslySingular
           options={{
             // Set here rather than from the screen, so the header and its
             // back button exist from the moment the screen is pushed.
