@@ -13,6 +13,7 @@ import {
 } from "../lib/kjorebokReport.js";
 import { periodLabel, periodRange, periodSlug, periodYearOf } from "../lib/period.js";
 import { findMatchingPlace } from "../lib/placeMatcher.js";
+import { POI_BACKFILL_BATCH, queuePoiLookup } from "../lib/tripPoi.js";
 import {
   insertPoints,
   loadRoute,
@@ -210,6 +211,24 @@ async function finalizeStaleActiveTrips(userId: string): Promise<void> {
   }
 }
 
+/** Queues POI lookups for the user's newest completed trips that have none yet. */
+async function backfillTripPois(userId: string): Promise<void> {
+  const pending = await prisma.trip.findMany({
+    where: { userId, status: "COMPLETED", poiResolvedAt: null },
+    orderBy: { startedAt: "desc" },
+    take: POI_BACKFILL_BATCH,
+    select: { id: true },
+  });
+  queuePoiLookup(pending.map((trip) => trip.id));
+}
+
+/** "Kiwi Storo (Vitaminveien 1, 0485 Oslo)": the name reads well, the address documents. */
+function reportEndpoint(place: Place | null, poi: string | null, address: string | null): string {
+  if (place) return place.label;
+  if (poi && address) return `${poi} (${address})`;
+  return poi ?? address ?? "—";
+}
+
 type ReportFilters = z.infer<typeof reportQuerySchema>;
 
 async function buildKjorebokReport(
@@ -235,6 +254,7 @@ async function buildKjorebokReport(
         id: true,
         startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true, purpose: true,
+        startPoi: true, endPoi: true,
         ...tripDocumentationSelect,
         ...tripEndpointsSelect,
       },
@@ -258,8 +278,8 @@ async function buildKjorebokReport(
       id: enriched.id,
       startedAt: enriched.startedAt,
       endedAt: enriched.endedAt,
-      from: enriched.startPlace?.label ?? enriched.startAddress ?? "—",
-      to: enriched.endPlace?.label ?? enriched.endAddress ?? "—",
+      from: reportEndpoint(enriched.startPlace, enriched.startPoi, enriched.startAddress),
+      to: reportEndpoint(enriched.endPlace, enriched.endPoi, enriched.endAddress),
       purpose: enriched.purpose,
       purposeNote: enriched.purposeNote,
       client: enriched.client,
@@ -348,6 +368,7 @@ export async function tripRoutes(app: FastifyInstance) {
           id: true, userId: true,
           status: true, startedAt: true, endedAt: true,
           distanceMeters: true, startAddress: true, endAddress: true,
+          startPoi: true, endPoi: true,
           purpose: true, mode: true, createdAt: true, updatedAt: true,
           ...tripDocumentationSelect,
           ...tripEndpointsSelect,
@@ -356,6 +377,7 @@ export async function tripRoutes(app: FastifyInstance) {
       }),
       loadUserPlaces(userId),
     ]);
+    void backfillTripPois(userId).catch((error) => request.log.warn({ err: error }, "POI-backfill feilet"));
     return reply.send(trips.map((t) => attachPlaces(t, places)));
   });
 
@@ -373,6 +395,7 @@ export async function tripRoutes(app: FastifyInstance) {
       loadUserPlaces(userId),
     ]);
     if (!stored) return reply.status(404).send({ error: "Not found" });
+    if (stored.status === "COMPLETED" && !stored.poiResolvedAt) queuePoiLookup([stored.id]);
 
     // A processed trip draws its smoothed line; one still running, its raw fixes.
     const { track, ...trip } = stored;
@@ -467,6 +490,7 @@ export async function tripRoutes(app: FastifyInstance) {
     if (!ended) return reply.status(404).send({ error: "Active trip not found" });
     // Too short to count as a trip: it was deleted.
     if (!ended.result) return reply.status(204).send();
+    queuePoiLookup([ended.result.id]);
     return reply.send(ended.result);
   });
 
@@ -502,6 +526,7 @@ export async function tripRoutes(app: FastifyInstance) {
         id: true, userId: true,
         status: true, startedAt: true, endedAt: true,
         distanceMeters: true, startAddress: true, endAddress: true,
+        startPoi: true, endPoi: true,
         purpose: true, mode: true, createdAt: true, updatedAt: true,
         ...tripDocumentationSelect,
       },

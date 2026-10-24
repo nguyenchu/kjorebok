@@ -47,15 +47,15 @@ function formatDayHeader(date: Date): string {
 }
 
 function getTripAddress(trip: TripSummary): string | null {
-  return trip.endPlace?.label ?? trip.endAddress ?? trip.startPlace?.label ?? trip.startAddress ?? null;
+  return getTripEndLabel(trip) ?? trip.startPlace?.label ?? trip.startPoi ?? trip.startAddress ?? null;
 }
 
 function getTripStartLabel(trip: TripSummary): string {
-  return trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start";
+  return trip.startPlace?.label ?? trip.startPoi ?? trip.startAddress ?? "Ukjent start";
 }
 
 function getTripEndLabel(trip: TripSummary): string | null {
-  return trip.endPlace?.label ?? trip.endAddress ?? null;
+  return trip.endPlace?.label ?? trip.endPoi ?? trip.endAddress ?? null;
 }
 
 function getWeekStart(weekOffset: number): Date {
@@ -339,7 +339,13 @@ export default function TripsScreen() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // On every focus, not just the first: a place named or a trip edited in the
+  // trip view has to show here when the user comes back.
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
