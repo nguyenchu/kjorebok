@@ -20,5 +20,15 @@ allprojects {
   }
 }
 
+// Windows: keep CMake build dirs out of the deep pnpm paths in node_modules,
+// which push ninja past the path length limit ("build.ninja still dirty").
+if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+  subprojects {
+    plugins.withId("com.android.library") {
+      android.externalNativeBuild.cmake.buildStagingDirectory = file("C:/cxx/${project.name}")
+    }
+  }
+}
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
