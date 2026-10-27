@@ -27,6 +27,9 @@ if (System.getProperty("os.name").toLowerCase().contains("windows")) {
     plugins.withId("com.android.library") {
       android.externalNativeBuild.cmake.buildStagingDirectory = file("C:/cxx/${project.name}")
     }
+    plugins.withId("com.android.application") {
+      android.externalNativeBuild.cmake.buildStagingDirectory = file("C:/cxx/${project.name}")
+    }
   }
 }
 
