@@ -15,6 +15,7 @@ apps/mobile/android/build/
 apps/mobile/android/app/build/
 apps/mobile/android/app/.cxx/
 apps/mobile/android/local.properties
+apps/mobile/modules/*/android/build/
 apps/mobile/ios/
 
 # Exported production GPS points for local analysis
