@@ -55,6 +55,12 @@ model Trip {
   startLng           Float?
   endLat             Float?
   endLng             Float?
+  /// Name of a shop, business or landmark at each end, from OpenStreetMap
+  /// (apps/api/src/lib/poi.ts). Kept beside the address, never in place of it.
+  startPoi           String?
+  endPoi             String?
+  /// When the POI lookup ran, found or not, so it is not repeated.
+  poiResolvedAt      DateTime?
   /// Derived from TripPoint by processTrack (apps/api/src/lib/track); null
   /// until the trip has been processed. distanceMeters and mode are too.
   rawDistanceMeters  Float?

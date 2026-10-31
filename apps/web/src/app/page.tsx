@@ -89,15 +89,22 @@ function weekArrowStyle(disabled: boolean): CSSProperties {
 }
 
 function getTripAddress(trip: TripSummary): string | null {
-  return trip.endPlace?.label ?? trip.endAddress ?? trip.startPlace?.label ?? trip.startAddress ?? null;
+  return (
+    trip.endPlace?.label ?? trip.endPoi ?? trip.endAddress ??
+    trip.startPlace?.label ?? trip.startPoi ?? trip.startAddress ?? null
+  );
 }
 
-function getTripStartLabel(trip: { startPlace?: { label: string } | null; startAddress: string | null }): string {
-  return trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start";
+function getTripStartLabel(
+  trip: { startPlace?: { label: string } | null; startPoi?: string | null; startAddress: string | null },
+): string {
+  return trip.startPlace?.label ?? trip.startPoi ?? trip.startAddress ?? "Ukjent start";
 }
 
-function getTripEndLabel(trip: { endPlace?: { label: string } | null; endAddress: string | null }): string {
-  return trip.endPlace?.label ?? trip.endAddress ?? "Ukjent slutt";
+function getTripEndLabel(
+  trip: { endPlace?: { label: string } | null; endPoi?: string | null; endAddress: string | null },
+): string {
+  return trip.endPlace?.label ?? trip.endPoi ?? trip.endAddress ?? "Ukjent slutt";
 }
 
 function getWeekStart(weekOffset: number): Date {
