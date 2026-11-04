@@ -22,13 +22,16 @@ allprojects {
 
 // Windows: keep CMake build dirs out of the deep pnpm paths in node_modules,
 // which push ninja past the path length limit ("build.ninja still dirty").
+// The kjorebok prefix keeps this project's CMake cache apart from other
+// React Native projects that use C:/cxx.
 if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+  def cxxRoot = "C:/cxx/kjorebok"
   subprojects {
     plugins.withId("com.android.library") {
-      android.externalNativeBuild.cmake.buildStagingDirectory = file("C:/cxx/${project.name}")
+      android.externalNativeBuild.cmake.buildStagingDirectory = file("${cxxRoot}/${project.name}")
     }
     plugins.withId("com.android.application") {
-      android.externalNativeBuild.cmake.buildStagingDirectory = file("C:/cxx/${project.name}")
+      android.externalNativeBuild.cmake.buildStagingDirectory = file("${cxxRoot}/${project.name}")
     }
   }
 }
