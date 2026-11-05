@@ -24,7 +24,8 @@ const MODE_LABELS: Record<TripMode, string> = {
 };
 
 const TripMap = dynamic(() => import("./TripMap"), { ssr: false });
-import { addDays, addWeeks, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfMonth, startOfWeek, subMonths } from "date-fns";
+import { addDays, differenceInCalendarWeeks, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfMonth, startOfWeek, subMonths } from "date-fns";
+import { formatWeekRange, getMaxWeekOffset, getWeekStart } from "@kjorebok/shared/week";
 import { nb } from "date-fns/locale";
 
 type DayLog = {
@@ -100,10 +101,6 @@ function getTripEndLabel(trip: { endPlace?: { label: string } | null; endAddress
   return trip.endPlace?.label ?? trip.endAddress ?? "Ukjent slutt";
 }
 
-function getWeekStart(weekOffset: number): Date {
-  return startOfWeek(addWeeks(new Date(), -weekOffset), { weekStartsOn: 1 });
-}
-
 function buildWeekLog(trips: TripSummary[], weekOffset: number): DayLog[] {
   const weekStart = getWeekStart(weekOffset);
   const tripsByDay = new Map<string, TripSummary[]>();
@@ -135,35 +132,6 @@ function buildWeekLog(trips: TripSummary[], weekOffset: number): DayLog[] {
 
     return { day, trips: dayTrips, lastKnownAddress };
   }).filter((d): d is DayLog => d !== null);
-}
-
-function getMaxWeekOffset(trips: TripSummary[]): number {
-  if (trips.length === 0) return 0;
-
-  const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  const earliestTripDay = startOfDay(
-    trips.reduce((earliest, trip) => {
-      const tripDate = parseISO(trip.startedAt);
-      return tripDate < earliest ? tripDate : earliest;
-    }, parseISO(trips[0].startedAt)),
-  );
-
-  return Math.max(
-    0,
-    differenceInCalendarWeeks(currentWeekStart, startOfWeek(earliestTripDay, { weekStartsOn: 1 }), { weekStartsOn: 1 }),
-  );
-}
-
-function formatWeekRange(weekStart: Date): string {
-  const firstDay = weekStart;
-  const lastDay = addDays(weekStart, 6);
-  const sameMonth = format(firstDay, "yyyy-MM", { locale: nb }) === format(lastDay, "yyyy-MM", { locale: nb });
-
-  if (sameMonth) {
-    return `${format(firstDay, "d.", { locale: nb })}–${format(lastDay, "d. MMMM yyyy", { locale: nb })}`;
-  }
-
-  return `${format(firstDay, "d. MMM", { locale: nb })}–${format(lastDay, "d. MMM yyyy", { locale: nb })}`;
 }
 
 export default function DashboardPage() {
