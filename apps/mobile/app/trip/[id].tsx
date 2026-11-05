@@ -14,7 +14,21 @@ import {
 import { useLocalSearchParams, Stack } from "expo-router";
 import { WebView } from "react-native-webview";
 import { api } from "@/lib/api";
-import type { Trip, TripPurpose, TripStop } from "@kjorebok/shared";
+import type { Place, Trip, TripPurpose, TripStop } from "@kjorebok/shared";
+
+type Endpoint = "start" | "end";
+
+/** What the trip knows about one end: a saved place, a business nearby, the street address. */
+function endpointOf(trip: Trip, which: Endpoint) {
+  return which === "start"
+    ? { place: trip.startPlace, poi: trip.startPoi, address: trip.startAddress, lat: trip.startLat, lng: trip.startLng }
+    : { place: trip.endPlace, poi: trip.endPoi, address: trip.endAddress, lat: trip.endLat, lng: trip.endLng };
+}
+
+function endpointTitle(trip: Trip, which: Endpoint): string {
+  const { place, poi, address } = endpointOf(trip, which);
+  return place?.label ?? poi ?? address ?? (which === "start" ? "Ukjent start" : "Ukjent slutt");
+}
 
 /** "Snitt 42 km/t · maks 78 km/t · 18 min i bevegelse · 4 min stopp", or "" before the trip is processed. */
 function formatMotion(
@@ -88,6 +102,9 @@ export default function TripDetailScreen() {
   const [odometerStart, setOdometerStart] = useState("");
   const [odometerEnd, setOdometerEnd] = useState("");
   const [saving, setSaving] = useState(false);
+  const [naming, setNaming] = useState<Endpoint | null>(null);
+  const [placeLabel, setPlaceLabel] = useState("");
+  const [savingPlace, setSavingPlace] = useState(false);
 
   useEffect(() => {
     api
@@ -156,14 +173,105 @@ export default function TripDetailScreen() {
     }
   };
 
+  const startNaming = (which: Endpoint) => {
+    if (!trip) return;
+    const { place, poi } = endpointOf(trip, which);
+    setPlaceLabel(place?.label ?? poi ?? "");
+    setNaming(which);
+  };
+
+  const handleSavePlace = async () => {
+    if (!trip || !naming) return;
+    const label = placeLabel.trim();
+    const { place, lat, lng } = endpointOf(trip, naming);
+    if (!label || lat == null || lng == null) return;
+
+    setSavingPlace(true);
+    try {
+      if (place) {
+        await api.patch<Place>(`/places/${place.id}`, { label });
+      } else {
+        await api.post<Place>("/places", { label, lat, lng });
+      }
+      // A new place can match both ends of a round trip, and other trips too,
+      // so let the server do the matching again.
+      // Unsaved trip edits live in their own state, so they survive this.
+      setTrip(await api.get<Trip>(`/trips/${trip.id}`));
+      setNaming(null);
+    } catch (e: any) {
+      Alert.alert("Kunne ikke lagre stedet", e?.message ?? "Prøv igjen senere.");
+    } finally {
+      setSavingPlace(false);
+    }
+  };
+
+  const renderEndpoint = (current: Trip, which: Endpoint) => {
+    const { place, poi, address, lat, lng } = endpointOf(current, which);
+    const title = endpointTitle(current, which);
+    // The address is the record the report relies on; keep it visible under a name.
+    const subtitle = (place || poi) && address ? address : null;
+    const canName = lat != null && lng != null;
+
+    return (
+      <View style={styles.endpoint} key={which}>
+        <Text style={styles.endpointCaption}>{which === "start" ? "Fra" : "Til"}</Text>
+        {naming === which ? (
+          <>
+            <TextInput
+              style={styles.input}
+              value={placeLabel}
+              onChangeText={setPlaceLabel}
+              placeholder="f.eks. Hjem, Kontoret, Hytta"
+              placeholderTextColor="#94a3b8"
+              maxLength={80}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={() => void handleSavePlace()}
+            />
+            <Text style={styles.hint}>
+              {place
+                ? "Nytt navn gjelder alle turer som starter eller slutter her."
+                : "Turer som starter eller slutter innen 100 meter herfra, får dette navnet."}
+            </Text>
+            <View style={styles.endpointActions}>
+              <TouchableOpacity onPress={() => setNaming(null)} disabled={savingPlace}>
+                <Text style={styles.linkMuted}>Avbryt</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void handleSavePlace()}
+                disabled={savingPlace || !placeLabel.trim()}
+              >
+                {savingPlace ? (
+                  <ActivityIndicator color="#2563eb" />
+                ) : (
+                  <Text style={[styles.link, !placeLabel.trim() && styles.linkDisabled]}>Lagre sted</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <View style={styles.endpointRow}>
+            <View style={styles.endpointText}>
+              <Text style={styles.endpointTitle}>{title}</Text>
+              {subtitle && <Text style={styles.endpointSubtitle}>{subtitle}</Text>}
+            </View>
+            {canName && (
+              <TouchableOpacity onPress={() => startNaming(which)} hitSlop={8}>
+                <Text style={styles.link}>{place ? "Endre navn" : "Gi navn"}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <Stack.Screen
         options={{
           // The header itself is configured in the root layout.
-          title: trip
-            ? `${trip.startPlace?.label ?? trip.startAddress ?? "Ukjent start"} → ${trip.endPlace?.label ?? trip.endAddress ?? "Ukjent slutt"}`
-            : "Tur",
+          title: trip ? `${endpointTitle(trip, "start")} → ${endpointTitle(trip, "end")}` : "Tur",
         }}
       />
 
@@ -201,6 +309,9 @@ export default function TripDetailScreen() {
               {trip.vehicle ? ` · ${trip.vehicle.label} (${trip.vehicle.registration})` : ""}
             </Text>
             {formatMotion(trip) !== "" && <Text style={styles.infoMeta}>{formatMotion(trip)}</Text>}
+
+            {renderEndpoint(trip, "start")}
+            {renderEndpoint(trip, "end")}
 
             <Text style={styles.fieldLabel}>Formål med turen</Text>
             <View style={styles.purposeRow}>
@@ -358,6 +469,16 @@ const styles = StyleSheet.create({
     minHeight: 46,
   },
   hint: { fontSize: 12, color: "#64748b", lineHeight: 18, marginTop: 14 },
+  endpoint: { marginTop: 16 },
+  endpointCaption: { fontSize: 12, fontWeight: "700", color: "#64748b", marginBottom: 4 },
+  endpointRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  endpointText: { flex: 1 },
+  endpointTitle: { fontSize: 15, fontWeight: "600", color: "#0f172a" },
+  endpointSubtitle: { fontSize: 13, color: "#64748b", marginTop: 2 },
+  endpointActions: { flexDirection: "row", justifyContent: "flex-end", gap: 24, marginTop: 12 },
+  link: { fontSize: 14, fontWeight: "700", color: "#2563eb" },
+  linkMuted: { fontSize: 14, fontWeight: "600", color: "#64748b" },
+  linkDisabled: { opacity: 0.4 },
   odometerRow: { flexDirection: "row", gap: 12 },
   odometerField: { flex: 1 },
   odometerCaption: { fontSize: 12, color: "#64748b", marginBottom: 6 },

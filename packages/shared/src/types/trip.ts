@@ -23,6 +23,13 @@ export interface Trip {
   distanceMeters: number;
   startAddress: string | null;
   endAddress: string | null;
+  /** Name of a shop, business or landmark at the start, looked up after the trip. */
+  startPoi: string | null;
+  endPoi: string | null;
+  startLat: number | null;
+  startLng: number | null;
+  endLat: number | null;
+  endLng: number | null;
   startPlace: Place | null;
   endPlace: Place | null;
   purpose: TripPurpose;

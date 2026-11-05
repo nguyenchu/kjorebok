@@ -1,6 +1,6 @@
 import type { Place } from "@kjorebok/shared";
 
-function haversine(aLat: number, aLng: number, bLat: number, bLng: number): number {
+export function haversine(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371000;
   const dLat = ((bLat - aLat) * Math.PI) / 180;
   const dLng = ((bLng - aLng) * Math.PI) / 180;
