@@ -14,7 +14,8 @@ import { getTrackerState } from "@/lib/tripTracker";
 import { assessTrackerHealth, type TrackerHealth } from "@/lib/trackerHealth";
 import { useOnAppActive } from "@/lib/useOnAppActive";
 import type { TripMode, TripPurpose, TripSummary } from "@kjorebok/shared";
-import { addDays, addWeeks, differenceInCalendarWeeks, differenceInMinutes, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, startOfWeek, subDays } from "date-fns";
+import { addDays, differenceInMinutes, format, isSameDay, isToday, isYesterday, parseISO, startOfDay, subDays } from "date-fns";
+import { formatWeekRange, getMaxWeekOffset, getWeekStart } from "@kjorebok/shared/week";
 import { nb } from "date-fns/locale";
 
 type DayGroup = {
@@ -58,10 +59,6 @@ function getTripEndLabel(trip: TripSummary): string | null {
   return trip.endPlace?.label ?? trip.endAddress ?? null;
 }
 
-function getWeekStart(weekOffset: number): Date {
-  return startOfWeek(addWeeks(new Date(), -weekOffset), { weekStartsOn: 1 });
-}
-
 function buildWeekGroups(trips: TripSummary[], weekOffset: number): DayGroup[] {
   const weekStart = getWeekStart(weekOffset);
   const today = startOfDay(new Date());
@@ -93,35 +90,6 @@ function buildWeekGroups(trips: TripSummary[], weekOffset: number): DayGroup[] {
       lastKnownAddress: previousTrip ? getTripAddress(previousTrip) : null,
     };
   }).filter((g): g is DayGroup => g !== null);
-}
-
-function getMaxWeekOffset(trips: TripSummary[]): number {
-  if (trips.length === 0) return 0;
-
-  const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  const earliestTripDay = startOfDay(
-    trips.reduce((earliest, trip) => {
-      const tripDate = parseISO(trip.startedAt);
-      return tripDate < earliest ? tripDate : earliest;
-    }, parseISO(trips[0].startedAt)),
-  );
-
-  return Math.max(
-    0,
-    differenceInCalendarWeeks(currentWeekStart, startOfWeek(earliestTripDay, { weekStartsOn: 1 }), { weekStartsOn: 1 }),
-  );
-}
-
-function formatWeekRange(weekStart: Date): string {
-  const firstDay = weekStart;
-  const lastDay = addDays(weekStart, 6);
-  const sameMonth = format(firstDay, "yyyy-MM", { locale: nb }) === format(lastDay, "yyyy-MM", { locale: nb });
-
-  if (sameMonth) {
-    return `${format(firstDay, "d.", { locale: nb })}–${format(lastDay, "d. MMMM yyyy", { locale: nb })}`;
-  }
-
-  return `${format(firstDay, "d. MMM", { locale: nb })}–${format(lastDay, "d. MMM yyyy", { locale: nb })}`;
 }
 
 const MODE_ICONS: Record<TripMode, string> = {
